@@ -1,0 +1,72 @@
+# Python CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-python/ for more details
+#
+version: 2
+
+jobs:
+  build:
+    docker:
+      - image: circleci/python:3.9.2
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+          - v0-dependencies-{{ checksum "ci_requirements.txt" }}
+      - run:
+          name: run black codegen_sources
+          command: |
+            pip install black==19.10b0
+            black codegen_sources/. --diff
+            black codegen_sources/. --check
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            
+            pip install -r ci_requirements.txt           
+            
+            mkdir tree-sitter
+            cd tree-sitter
+            git clone https://github.com/tree-sitter/tree-sitter-cpp.git
+            git clone https://github.com/tree-sitter/tree-sitter-java.git
+            git clone https://github.com/tree-sitter/tree-sitter-python.git
+            cd ..
+
+            pip install cython
+            cd codegen_sources/model/tools
+            git clone https://github.com/glample/fastBPE.git
+            cd fastBPE
+            g++ -std=c++11 -pthread -O3 fastBPE/main.cc -IfastBPE -o fast
+            python setup.py install
+            cd ../../../../
+            pip install fastBPE
+            
+      - save_cache:
+          paths:
+            - ./venv
+          key: v0-dependencies-{{ checksum "ci_requirements.txt" }}
+
+
+      - run:
+          name: Run tokenization tests
+          when: always
+          command: |
+            . venv/bin/activate
+            pytest ./codegen_sources/preprocessing/tests/tokenization
+      - run:
+          name: Run obfuscation tests
+          when: always
+          command: |
+            . venv/bin/activate
+            pytest ./codegen_sources/preprocessing/tests/obfuscation
+      
+      - run:
+          name: run_pipeline
+          when: always
+          command: |
+            . venv/bin/activate
+            pytest ./codegen_sources/preprocessing/tests/pipeline
+           
+

@@ -1,0 +1,16 @@
+torch>=1.6.0
+torchvision
+torchaudio
+six
+scikit-learn
+stringcase
+transformers
+ply
+slimit
+astunparse
+submitit
+sacrebleu==1.2.11
+javalang
+psutil
+pytest==6.2.2
+tree_sitter
