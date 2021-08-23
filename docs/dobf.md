@@ -10,14 +10,14 @@ Pytorch original implementation of [DOBF: A Deobfuscation Pre-Training Objective
 
 We provide DOBF models with the same architecture as codeBERT and graphCodeBERT (to be comparable on downstream tasks)
 
-- [MLM](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/mlm.pth)
+- [MLM](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/mlm_roberta_size.pth)
 - [DOBF init scratch](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf_init_scratch.pth)
 - [DOBF model](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf.pth)
 - [DOBF+DAE model](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf_plus_denoising.pth)
 
 In command line:
 ```angular2html
-wget https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/mlm.pth
+wget https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/mlm_roberta_size.pth
 wget https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf_init_scratch.pth
 wget https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf.pth
 wget https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/dobf_plus_denoising.pth
