@@ -6,7 +6,8 @@ conda config --add channels pytorch
 conda install pytorch torchvision torchaudio cudatoolkit=11.0 six scikit-learn stringcase transformers ply slimit astunparse submitit
 pip install cython
 cd codegen_sources/model/tools
-git clone git@github.com:glample/fastBPE.git
+git clone https://github.com/glample/fastBPE.git
+
 cd fastBPE
 g++ -std=c++11 -pthread -O3 fastBPE/main.cc -IfastBPE -o fast
 python setup.py install
