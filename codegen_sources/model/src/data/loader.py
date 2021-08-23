@@ -559,6 +559,9 @@ def check_data_params(params):
     params.stopping_criterion = params.stopping_criterion.replace(
         "#obf_proba", str(params.obf_proba)
     )
+    assert not (
+        params.eval_computation and not params.has_sentences_ids
+    ), "Sentence IDs are necessary to compute the computational accuracy."
     # assert all([all([os.path.isfile(p1) and os.path.isfile(p2) for p1, p2 in paths.values()]) for paths in params.para_dataset.values()])
 
     # check that we can evaluate on BLEU
