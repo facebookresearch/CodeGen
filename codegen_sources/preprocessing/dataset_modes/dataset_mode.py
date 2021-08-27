@@ -339,12 +339,11 @@ class DatasetMode(Generic[T]):
                 all_tok_path = self.folder.joinpath(f"{lang}.all.{suffix}.tok")
                 if is_valid_file(all_tok_path):
                     continue
-                if (
-                    len(list(self.folder.glob(f"{lang}.*[0-1][0-9][0-9].{suffix}.tok")))
-                    == 0
-                ):
+                if len(list(self.folder.glob(f"{lang}.*[0-9].{suffix}.tok"))) == 0:
                     continue
-                command = f"cd {self.folder}; cat {lang}.*[0-1][0-9][0-9].{suffix}.tok > {all_tok_path}"
+                command = (
+                    f"cd {self.folder}; cat {lang}.*[0-9].{suffix}.tok > {all_tok_path}"
+                )
                 proc = subprocess.run(
                     command,
                     shell=True,
@@ -353,7 +352,7 @@ class DatasetMode(Generic[T]):
                     executable="/bin/bash",
                 )
                 logger.info(
-                    f"all files {lang}.*[0-4][0-9][0-9].{suffix}.tok regrouped in {all_tok_path} ."
+                    f"all files {lang}.*[0-9].{suffix}.tok regrouped in {all_tok_path} ."
                 )
                 # TODO check number of lines
                 assert proc.returncode == 0, proc.stderr
