@@ -58,7 +58,7 @@ Note that is your data is small enough to fit on a single GPU, then NGPU=1 and l
 
 Note that you cannot learn bpe codes on obfuscated data, so you either use the bpe codes we provide, or you learn codes running the monolingual pipeline.
 
-Note that if you can also use roberta_bpe instead of fast_bpe. The bpe of roberta doesnt require codes de to be learnt.
+Note that if you can also use roberta_bpe instead of fast_bpe. The bpe of roberta doesn't require to learn BPE codes.
 
 
 ### Train
