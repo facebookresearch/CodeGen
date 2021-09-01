@@ -32,7 +32,7 @@ class Trainer(object):
         # epoch / iteration size
         self.epoch_size = params.epoch_size
         if self.epoch_size == -1:
-            self.epoch_size = self.data
+            self.epoch_size = len(self.data)
             assert self.epoch_size > 0
 
         # data iterators
