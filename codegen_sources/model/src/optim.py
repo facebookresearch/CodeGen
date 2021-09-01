@@ -123,7 +123,9 @@ class AdamInverseSqrtWithWarmup(Adam):
         self.warmup_updates = warmup_updates
         self.warmup_init_lr = warmup_init_lr
         warmup_end_lr = lr
-        self.lr_step = (warmup_end_lr - warmup_init_lr) / warmup_updates
+        self.lr_step = (
+            (warmup_end_lr - warmup_init_lr) / warmup_updates if warmup_updates else 1
+        )
 
         # then, decay prop. to the inverse square root of the update number
         self.exp_factor = exp_factor
