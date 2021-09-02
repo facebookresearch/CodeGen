@@ -124,12 +124,18 @@ class AdamInverseSqrtWithWarmup(Adam):
         self.warmup_init_lr = warmup_init_lr
         warmup_end_lr = lr
         self.lr_step = (
-            (warmup_end_lr - warmup_init_lr) / warmup_updates if warmup_updates else 1
+            (warmup_end_lr - warmup_init_lr) / warmup_updates
+            if warmup_updates > 0
+            else 1
         )
 
         # then, decay prop. to the inverse square root of the update number
         self.exp_factor = exp_factor
-        self.decay_factor = warmup_end_lr * warmup_updates ** self.exp_factor
+        self.decay_factor = (
+            warmup_end_lr * warmup_updates ** self.exp_factor
+            if warmup_updates > 0
+            else warmup_end_lr
+        )
 
         # total number of updates
         for param_group in self.param_groups:
