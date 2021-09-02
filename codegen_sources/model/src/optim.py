@@ -193,7 +193,11 @@ class AdamCosineWithWarmup(Adam):
         self.warmup_updates = warmup_updates
         self.warmup_init_lr = warmup_init_lr
         warmup_end_lr = lr
-        self.lr_step = (warmup_end_lr - warmup_init_lr) / warmup_updates
+        self.lr_step = (
+            (warmup_end_lr - warmup_init_lr) / warmup_updates
+            if warmup_updates > 0
+            else 1
+        )
 
         # then, apply cosine scheduler
         self.min_lr = min_lr
