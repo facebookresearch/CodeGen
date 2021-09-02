@@ -14,6 +14,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+LAYER_NORM_EPSILON = 1e-5
+
 N_MAX_POSITIONS = 2048  # maximum input sequence length
 
 DECODER_ONLY_PARAMS = [
@@ -375,7 +377,7 @@ class TransformerModel(nn.Module):
             self.spans_embeddings = Embedding(
                 params.n_classes_classif, self.dim, padding_idx=self.pad_index
             )
-        self.layer_norm_emb = nn.LayerNorm(self.dim, eps=1e-5)
+        self.layer_norm_emb = nn.LayerNorm(self.dim, eps=LAYER_NORM_EPSILON)
 
         # transformer layers
         self.attentions = nn.ModuleList()
@@ -394,9 +396,9 @@ class TransformerModel(nn.Module):
                     self.n_heads, self.dim, dropout=self.attention_dropout
                 )
             )
-            self.layer_norm1.append(nn.LayerNorm(self.dim, eps=1e-5))
+            self.layer_norm1.append(nn.LayerNorm(self.dim, eps=LAYER_NORM_EPSILON))
             if self.is_decoder:
-                self.layer_norm15.append(nn.LayerNorm(self.dim, eps=1e-5))
+                self.layer_norm15.append(nn.LayerNorm(self.dim, eps=LAYER_NORM_EPSILON))
                 self.encoder_attn.append(
                     MultiHeadAttention(
                         self.n_heads,
@@ -414,7 +416,7 @@ class TransformerModel(nn.Module):
                     gelu_activation=self.gelu_activation,
                 )
             )
-            self.layer_norm2.append(nn.LayerNorm(self.dim, eps=1e-5))
+            self.layer_norm2.append(nn.LayerNorm(self.dim, eps=LAYER_NORM_EPSILON))
 
         # output layer
         if self.with_output:
