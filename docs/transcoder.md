@@ -15,7 +15,7 @@ Models used in TransCoder original paper are the following:
  - [TransCoder_model_1](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_1.pth) for C++ -> Java, Java -> C++ and Java -> Python
  - [TransCoder_model_2](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_2.pth) for C++ -> Python, Python -> C++ and Python -> Java
 
-Note: if you really want the output of these models to be exactly right, you need to change the constant [LAYER_NORM_EPSILON](../codegen_sources/model/src/model/transformer.py) to be `1e-12` instead of `1e-5`. If you don't, the result will be the same in more than 99% of the cases and only slightly different otherwise.
+Note: if you really want the output of these models to be exactly right, you need to change the constant [LAYER_NORM_EPSILON](../codegen_sources/model/src/model/transformer.py#L17) to be `1e-12` instead of `1e-5`. If you don't, the result will be the same in more than 99% of the cases and only slightly different otherwise.
 
 [Update:] Better model for translating between java and python (pretrained with our new model DOBF - 2021):
  - [translator_transcoder_size_from_DOBF](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/translator_transcoder_size_from_DOBF.pth)
