@@ -11,7 +11,7 @@ def f_gold(n, k):
         return (2 * n + 1 - k)
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

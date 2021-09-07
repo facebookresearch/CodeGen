@@ -42,7 +42,7 @@ def f_gold(arr, n, A, B, C):
         arr[i] = new_arr[i]
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

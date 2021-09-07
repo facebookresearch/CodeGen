@@ -15,7 +15,7 @@ def f_gold(s):
     return maxvalue
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

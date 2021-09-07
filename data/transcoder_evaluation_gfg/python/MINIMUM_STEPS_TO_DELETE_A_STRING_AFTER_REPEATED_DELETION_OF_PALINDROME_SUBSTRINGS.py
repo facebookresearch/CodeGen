@@ -26,7 +26,7 @@ def f_gold(str):
     return dp[0][N - 1]
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

@@ -17,7 +17,7 @@ def f_gold(arr, n):
     return min(incl, excl)
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

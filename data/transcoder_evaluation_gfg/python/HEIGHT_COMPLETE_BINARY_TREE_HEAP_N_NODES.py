@@ -11,7 +11,7 @@ def f_gold(N):
     return math.ceil(math.log2(N + 1)) - 1
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

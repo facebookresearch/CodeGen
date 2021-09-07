@@ -17,7 +17,7 @@ def f_gold(arr, n, k):
         k -= pos - i
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

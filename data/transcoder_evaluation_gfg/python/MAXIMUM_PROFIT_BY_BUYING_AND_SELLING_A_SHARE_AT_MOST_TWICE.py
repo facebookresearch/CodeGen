@@ -20,7 +20,7 @@ def f_gold(price, n):
     return result
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [
