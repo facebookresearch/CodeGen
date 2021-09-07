@@ -13,7 +13,7 @@ def f_gold(arr, n, x):
     return - 1
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

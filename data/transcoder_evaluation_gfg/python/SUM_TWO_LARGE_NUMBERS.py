@@ -29,7 +29,7 @@ def f_gold(str1, str2):
     return str
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

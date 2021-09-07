@@ -13,7 +13,7 @@ def f_gold(n):
     return BT[n]
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

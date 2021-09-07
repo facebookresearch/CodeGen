@@ -15,7 +15,7 @@ def f_gold(x1, y1, x2, y2, r1, r2):
         return 0
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

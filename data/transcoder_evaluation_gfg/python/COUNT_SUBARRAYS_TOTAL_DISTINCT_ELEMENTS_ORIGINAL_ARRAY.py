@@ -30,7 +30,7 @@ def f_gold(arr, n):
     return ans
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

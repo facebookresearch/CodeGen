@@ -17,7 +17,7 @@ def f_gold(mat, N):
     return max_xor
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

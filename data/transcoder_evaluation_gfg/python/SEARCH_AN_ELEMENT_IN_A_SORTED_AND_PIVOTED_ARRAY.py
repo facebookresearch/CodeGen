@@ -19,7 +19,7 @@ def f_gold(arr, l, h, key):
     return f_gold(arr, l, mid - 1, key)
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

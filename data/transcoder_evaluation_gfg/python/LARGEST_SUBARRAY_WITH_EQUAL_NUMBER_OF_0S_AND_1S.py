@@ -21,7 +21,7 @@ def f_gold(arr, n):
     return maxsize
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

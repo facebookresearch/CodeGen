@@ -21,7 +21,7 @@ def f_gold(arr, n):
     return - 1
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

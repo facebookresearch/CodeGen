@@ -22,7 +22,7 @@ def f_gold(n):
         return (n - 15) // 4 + 2
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [

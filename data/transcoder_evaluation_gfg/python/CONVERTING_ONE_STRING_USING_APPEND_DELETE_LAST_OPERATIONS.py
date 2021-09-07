@@ -18,7 +18,7 @@ def f_gold(str1, str2, k):
     return False
 
 
-# TOFILL
+#TOFILL
 
 if __name__ == '__main__':
     param = [
