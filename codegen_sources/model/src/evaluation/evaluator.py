@@ -767,7 +767,7 @@ class EncDecEvaluator(Evaluator):
                             x2,
                             len2,
                             self.params,
-                            len(self.data["dico"] - 1),
+                            len(self.data["dico"]) - 1,
                             rng,
                             torch_rng,
                         )
