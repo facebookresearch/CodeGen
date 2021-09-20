@@ -134,8 +134,9 @@ To have details on how to retrain specific models, please refer to the README sp
 \* Equal Contribution
 
 ## License
+The validation and test parallel datasets from GeeksForGeeks, and the evaluation scripts under [data/transcoder_evaluation_gfg](data/transcoder_evaluation_gfg) are released under the Creative Commons Attribution-ShareAlike 2.0 license. See https://creativecommons.org/licenses/by-sa/2.0/ for more information.
 
-`CodeGen` is under the license detailed in the Creative Commons Attribution-NonCommercial 4.0 International license. See LICENSE for more details.
+The rest of the `CodeGen` repository is under the MIT license. See [LICENSE](LICENSE) for more details.
 
 
 
