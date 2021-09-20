@@ -30,7 +30,7 @@ python -m codegen_sources.model.translate --src_lang python --tgt_lang java --mo
 
 ### Parallel Validation and Test Sets
 
-We release our parallel validation and test datasets. It consists of parallel functions in Cpp, Java and Python. You can download the raw data and the binarized version to be used for model evaluation [transcoder_test_set.zip](https://dl.fbaipublicfiles.com/transcoder/test_set/transcoder_test_set.zip).
+We release our parallel validation and test datasets. It consists of parallel functions in Cpp, Java and Python. You can download the raw data and the binarized version to be used for model evaluation [transcoder_test_set.zip](https://dl.fbaipublicfiles.com/transcoder/test_set/transcoder_test_set.zip). Note that this test set is released under the Creative Commons Attribution-ShareAlike 2.0 license. See https://creativecommons.org/licenses/by-sa/2.0/ for more information.
 
 The format of each line in each file is `<FUNCTION_ID> | <function>`. The function are tokenized. You can detokenize them with the script preprocessing/detokenize.py. You can extract the function id and use it to find the corresponding test script in `data/evaluation/geeks_for_geeks_successful_test_scripts/<language>` if it exists. For instance, for the line `COUNT_SET_BITS_IN_AN_INTEGER_3 | <function>` in the file test.cpp.shuf.valid.tok, the corresponding test script can be found in `data/evaluation/geeks_for_geeks_successful_test_scripts/cpp/COUNT_SET_BITS_IN_AN_INTEGER_3.cpp`. 
 If the script is missing, it means there was an issue with our automatically created tests for the corresponding function.
