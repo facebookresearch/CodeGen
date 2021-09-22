@@ -598,7 +598,9 @@ def restore_roberta_segmentation_sentence(line, single_line=False):
     byte_encoder = bytes_to_unicode()
     byte_decoder = {v: k for k, v in byte_encoder.items()}
     text = line.replace(" ", "")
-    res = bytearray([byte_decoder.get(c, 0) for c in text]).decode("utf-8", errors="replace")
+    res = bytearray([byte_decoder.get(c, 0) for c in text]).decode(
+        "utf-8", errors="replace"
+    )
     return res.replace("\n", "#NEWLINE") if single_line else res
 
 
