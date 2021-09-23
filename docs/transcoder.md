@@ -93,7 +93,7 @@ python train.py
 ## data / objectives
 --data_path '<DATA_PATH>' \ 
 --split_data_accross_gpu local \
---mlm_steps 'java,python' \
+--mlm_steps 'cpp,java,python' \
 --add_eof_to_stream true \
 --word_mask_keep_rand '0.8,0.1,0.1' \
 --word_pred '0.15' \
@@ -101,13 +101,13 @@ python train.py
 
 ## model
 --encoder_only true \
---n_layers 12  \
---emb_dim 768  \
---n_heads 12  \
---lgs 'java-python' \
+--n_layers 6  \
+--emb_dim 1024  \
+--n_heads 8  \
+--lgs 'cpp-java-python' \
 --max_vocab 64000 \
---gelu_activation true \
---roberta_mode true 
+--gelu_activation false \
+--roberta_mode false \
 
 #optimization
 --amp 2  \
@@ -135,7 +135,7 @@ python train.py
 ## data / objectives
 --data_path '<DATA_PATH>' \
 --split_data_accross_gpu local \
---bt_steps 'python_sa-java_sa-python_sa,java_sa-python_sa-java_sa'  \
+--bt_steps 'python_sa-java_sa-python_sa,java_sa-python_sa-java_sa,python_sa-cpp_sa-python_sa,java_sa-cpp_sa-java_sa,cpp_sa-python_sa-cpp_sa,cpp_sa-java_sa-cpp_sa' \
 --ae_steps 'python_sa,java_sa'  \
 --lambda_ae '0:1,30000:0.1,100000:0'  \ 
 --word_shuffle 3  \
@@ -145,18 +145,19 @@ python train.py
 ## model  
 --encoder_only False \
 --n_layers 0  \
---n_layers_encoder 12  \
+--n_layers_encoder 6  \
 --n_layers_decoder 6 \
---emb_dim 768  \
---n_heads 12  \
---lgs 'java_sa-python_sa'  \
+--emb_dim 1024  \
+--n_heads 8  \
+--lgs 'cpp_sa-java_sa-python_sa'  \
 --max_vocab 64000 \
---gelu_activation true
---roberta_mode true   \ 
+--gelu_activation false \
+--roberta_mode false   \ 
 
 ## model reloading
---reload_model '<PATH_TO_DOBF_MODEL>,'  \
---lgs_mapping 'java_sa:java_obfuscated,python_sa:python_obfuscated'  \
+--reload_model '<PATH_TO_MLM_MODEL>,<PATH_TO_MLM_MODEL>'  \
+--reload_encoder_for_decoder true \
+--lgs_mapping 'cpp_sa:cpp,java_sa:java,python_sa:python'  \
 
 ## optimization
 --amp 2  \
