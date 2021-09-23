@@ -156,6 +156,7 @@ python train.py
 
 ## model reloading
 --reload_model '<PATH_TO_MLM_MODEL>,<PATH_TO_MLM_MODEL>'  \
+--reload_encoder_for_decoder true \
 --lgs_mapping 'cpp_sa:cpp,java_sa:java,python_sa:python'  \
 
 ## optimization
