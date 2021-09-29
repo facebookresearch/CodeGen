@@ -15,6 +15,7 @@ from tree_sitter import Language, Parser
 from pathlib import Path
 from logging import getLogger
 
+TREE_SITTER_ROOT = Path(__file__).parents[3].joinpath("tree-sitter")
 NEW_LINE = "NEW_LINE"
 
 logger = getLogger()
@@ -44,7 +45,7 @@ class TreeSitterLangProcessor(LangProcessor):
             lib_path = self.root_folder.joinpath(f"{self.language}.so")
             repo_path = self.root_folder.joinpath(f"tree-sitter-{self.language}")
             if not lib_path.exists():
-                assert repo_path.is_dir()
+                assert repo_path.is_dir(), repo_path
                 Language.build_library(
                     # Store the library in the `build` directory
                     str(lib_path),
@@ -94,7 +95,7 @@ class TreeSitterLangProcessor(LangProcessor):
 
     def dfs(self, code, node, tokens, tokens_type):
         if len(node.children) == 0 or node.type in self.ast_nodes_type_string:
-            snippet = code[node.start_byte : node.end_byte]
+            snippet = code[node.start_byte : node.end_byte].strip(b" ")
             if isinstance(snippet, bytes):
                 snippet = snippet.decode("utf8")
             if len(snippet) > 0:
@@ -110,6 +111,8 @@ class TreeSitterLangProcessor(LangProcessor):
         if isinstance(code, list):
             code = " ".join(code)
         code = code.replace("ENDCOM", "\n")
+        code = code.replace("NEW_LINE", "\n")
+
         replaced_tokens = []
         # call parser of the tokenizer to find comments and string and detokenize them correctly
         try:
@@ -129,6 +132,8 @@ class TreeSitterLangProcessor(LangProcessor):
                     replaced_tokens.append(token_)
                 else:
                     replaced_tokens.append(token)
+                    if token in {";", "{", "}"}:
+                        replaced_tokens.append("\n")
         except KeyboardInterrupt:
             raise
         except:
@@ -138,12 +143,10 @@ class TreeSitterLangProcessor(LangProcessor):
         code = code.replace("\n", "NEW_LINE")
         code = code.replace('} "', 'CB_ "')
         code = code.replace('" {', '" OB_')
-        code = code.replace("*/ ", "*/ NEW_LINE")
-        code = code.replace("} ;", "CB_COLON NEW_LINE")
+        code = code.replace("} ;", "CB_COLON")
         code = code.replace("} ,", "CB_COMA")
-        code = code.replace("}", "CB_ NEW_LINE")
-        code = code.replace("{", "OB_ NEW_LINE")
-        code = code.replace(";", "; NEW_LINE")
+        code = code.replace("}", "CB_")
+        code = code.replace("{", "OB_")
         code = replace_tokens(code, self.stokens_to_chars)
         lines = re.split("NEW_LINE", code)
 

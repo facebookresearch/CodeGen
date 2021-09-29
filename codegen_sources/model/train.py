@@ -183,7 +183,7 @@ def get_parser():
         "then the emb of java_sa in this XP will be mapped to the emb of java_obfuscated in pretrained model",
     )
     parser.add_argument(
-        "--mt_lgs_id_mapping",
+        "--lgs_id_mapping",
         type=str,
         default="",
         help="Map the in or out language id of some languages to others for mt_steps "
@@ -204,10 +204,11 @@ def get_parser():
         "--lg_sampling_factor", type=float, default=-1, help="Language sampling factor"
     )
     parser.add_argument(
-        "--has_sentences_ids",
-        type=bool_flag,
-        default=False,
-        help="Parallel sentences has an id or not in parallel datasets.",
+        "--has_sentence_ids",
+        type=str,
+        default="",
+        help="Datasets with parallel sentence ids. Datasets separated by ,. "
+        "Example 'valid|para,train|lang1 if all parallel valid datasets and train lang1 datasets have ids",
     )
 
     # batch parameters
@@ -316,6 +317,9 @@ def get_parser():
     )
     parser.add_argument("--lambda_bt", type=str, default="1", help="BT coefficient")
     parser.add_argument(
+        "--lambda_st", type=str, default="1", help="Self-training coefficient"
+    )
+    parser.add_argument(
         "--lambda_classif",
         type=str,
         default="1",
@@ -332,6 +336,15 @@ def get_parser():
     parser.add_argument(
         "--mt_steps", type=str, default="", help="Machine translation steps"
     )
+    parser.add_argument(
+        "--cmt_steps",
+        type=str,
+        default="",
+        help="Conditioned machine translation steps",
+    )
+    parser.add_argument(
+        "--disc_steps", type=str, default="", help="Discriminator training steps"
+    )
     parser.add_argument("--do_steps", type=str, default="", help="Deobfuscation steps")
     parser.add_argument(
         "--obf_proba",
@@ -340,6 +353,9 @@ def get_parser():
         help="For Deobfuscation steps, probability of obsfuscation. If = 1 everything is obfuscated, 0 only one variable.",
     )
 
+    parser.add_argument(
+        "--st_steps", type=str, default="", help="Self trainings teps using unit tests"
+    )
     parser.add_argument(
         "--ae_steps", type=str, default="", help="Denoising auto-encoder steps"
     )
@@ -435,6 +451,125 @@ def get_parser():
         help="At BT training, sample temperature for generation",
     )
 
+    # ST parameters
+    parser.add_argument(
+        "--st_sample_temperature",
+        type=str,
+        default="0",
+        help="At ST training, sample temperature for generation",
+    )
+
+    parser.add_argument(
+        "--st_sample_cache_ratio",
+        type=str,
+        default="2",
+        help="At ST training, probability to sample from cache. If integer, sampling deterministically n times for each creation step",
+    )
+
+    parser.add_argument(
+        "--st_limit_tokens_per_batch",
+        type=bool_flag,
+        default=True,
+        help="At ST training, whether to limit batch size based on tokens per batch",
+    )
+
+    parser.add_argument(
+        "--st_sample_size",
+        type=int,
+        default=1,
+        help="Batch size for data sampled from cache",
+    )
+
+    parser.add_argument(
+        "--st_remove_proba",
+        type=float,
+        default=0.0,
+        help="Proba to remove sampled elements from cache",
+    )
+
+    parser.add_argument(
+        "--cache_warmup",
+        type=int,
+        default=500,
+        help="Batch size for data sampled from cache",
+    )
+
+    parser.add_argument(
+        "--robin_cache",
+        type=bool_flag,
+        default=False,
+        help="Whether to use the round robin cache",
+    )
+
+    parser.add_argument(
+        "--st_min_asserts",
+        type=str,
+        default="2",
+        help="Minimum number of asserts for the unit tests",
+    )
+
+    parser.add_argument(
+        "--st_show_stats",
+        type=bool,
+        default=False,
+        help="Whether to show stats about the created tests",
+    )
+
+    parser.add_argument(
+        "--st_min_mutation_score",
+        type=str,
+        default="0.9",
+        help="Minimum mutation score for the unit tests",
+    )
+
+    parser.add_argument(
+        "--st_refresh_iterator_rate",
+        type=int,
+        default=-1,
+        help="rate for refreshing the iterator taking new cutoff rate into account",
+    )
+
+    parser.add_argument(
+        "--unit_tests_path",
+        type=str,
+        default="",
+        help="path to the json file containing the unit tests and scores",
+    )
+
+    parser.add_argument(
+        "--cache_size",
+        type=int,
+        default=20000,
+        help="Size of the cache for round robin cache",
+    )
+
+    parser.add_argument(
+        "--cache_init_path",
+        type=str,
+        default="",
+        help="path to files to use to initialize the cache",
+    )
+    # ST beam size
+    parser.add_argument(
+        "--st_beam_size", type=str, default="1", help="At ST training: beam size",
+    )
+
+    # ST beam size
+    parser.add_argument(
+        "--st_length_penalty",
+        type=float,
+        default=0.5,
+        help="Length penalty for generating elements",
+    )
+
+    # ST test timeout
+    parser.add_argument(
+        "--st_test_timeout",
+        type=int,
+        default=15,
+        help="Timeout for the test runner running the unit tests",
+    )
+
     # Classification parameters
     parser.add_argument(
         "--n_classes_classif",
@@ -479,6 +614,12 @@ def get_parser():
         type=bool_flag,
         default=False,
         help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
+    )
+    parser.add_argument(
+        "--eval_st",
+        type=bool_flag,
+        default=False,
+        help="Whether to evaluate on self-generated tests with evosuite.",
     )
     parser.add_argument(
         "--generate_hypothesis",
@@ -575,6 +716,7 @@ def main(params):
     else:
         trainer = EncDecTrainer(encoder, decoder, data, params)
         evaluator = EncDecEvaluator(trainer, data, params)
+    print_memory(logger, "after building all models")
 
     # evaluation
     if params.eval_only:
@@ -646,7 +788,12 @@ def main(params):
             # back-translation steps
             for lang1, lang2, lang3 in shuf_order(params.bt_steps):
                 trainer.bt_step(
-                    lang1, lang2, lang3, params.lambda_bt, params.bt_sample_temperature
+                    lang1,
+                    lang2,
+                    lang3,
+                    params.lambda_bt,
+                    params.bt_sample_temperature,
+                    show_example=show_example,
                 )
 
             # Classification
@@ -655,6 +802,12 @@ def main(params):
                     lang1,
                     lang2,
                     getattr(params, "lambda_classif_" + "_".join((lang1, lang2))),
+                )
+
+            # Self-Labelling
+            for lang1, langs2 in shuf_order(params.st_steps):
+                trainer.st_step(
+                    lang1, langs2, params.lambda_st, show_example=show_example,
                 )
 
             trainer.iter()

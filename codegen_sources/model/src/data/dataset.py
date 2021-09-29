@@ -8,8 +8,26 @@
 import math
 from logging import getLogger
 
+import json
 import numpy as np
 import torch
+import sys
+from pathlib import Path
+
+
+sys.path.append(str(Path(__file__).parents[4]))
+print("adding to path", str(Path(__file__).parents[4]))
+
+from codegen_sources.model.src.utils import (
+    restore_segmentation_sentence,
+    get_programming_language_name,
+)
+
+TARGET_CLASS = "TARGET_CLASS"
+
+MUTATION_SCORE = "mutation_score"
+
+ASSERTS_COUNT = "asserts_count"
 
 logger = getLogger()
 
@@ -81,10 +99,13 @@ class StreamDataset(object):
 
 
 class Dataset(object):
-    def __init__(self, sent, pos, params):
+    def __init__(self, sent, pos, params, has_sentence_ids, unit_tests_st=False):
 
+        self.has_sentence_ids = has_sentence_ids
+        self.unit_tests_st = unit_tests_st
         self.eos_index = params.eos_index
         self.pad_index = params.pad_index
+        self.sep_index = params.sep_index
         self.batch_size = params.batch_size
         self.max_batch_size = params.max_batch_size
 
@@ -92,11 +113,23 @@ class Dataset(object):
         self.pos = pos
         self.lengths = self.pos[:, 1] - self.pos[:, 0]
 
+        self.unit_tests = {
+            get_programming_language_name(lang): {} for lang in params.st_tgt_langs
+        }
+        self.unit_tests_scores = dict()
+        self.st_tests_scores = None
         # check number of sentences
         assert len(self.pos) == (self.sent == self.eos_index).sum()
 
         # # remove empty sentences
         self.remove_empty_sentences()
+
+        # load unit tests for self training
+        if unit_tests_st:
+            assert (
+                has_sentence_ids
+            ), "Dataset should have sentence IDs for self training"
+            self.load_unit_test_data(params.unit_tests_path)
 
         # sanity checks
         self.check()
@@ -114,15 +147,25 @@ class Dataset(object):
         eos = self.eos_index
         # check sentences indices
         assert len(self.pos) == (self.sent[self.pos[:, 1]] == eos).sum()
+        assert self.st_tests_scores is None or len(self.pos) == len(
+            self.st_tests_scores
+        )
         # assert self.lengths.min() > 0                                     # check empty sentences
 
-    def batch_sentences(self, sentences):
+    def batch_sentences(self, sentences, split_sentences_ids):
         """
         Take as input a list of n sentences (torch.LongTensor vectors) and return
         a tensor of size (slen, n) where slen is the length of the longest
         sentence, and a vector lengths containing the length of each sentence.
         """
-        # sentences = sorted(sentences, key=lambda x: len(x), reverse=True)
+        if split_sentences_ids is None:
+            split_sentences_ids = self.has_sentence_ids
+        if split_sentences_ids:
+            ids, lengths_ids, sentences = self.prepare_sent_with_ids(sentences)
+        else:
+            ids = None
+            lengths_ids = None
+
         lengths = torch.LongTensor([len(s) + 2 for s in sentences])
         sent = torch.LongTensor(lengths.max().item(), lengths.size(0)).fill_(
             self.pad_index
@@ -134,7 +177,38 @@ class Dataset(object):
                 sent[1 : lengths[i] - 1, i].copy_(torch.from_numpy(s.astype(np.int64)))
             sent[lengths[i] - 1, i] = self.eos_index
 
-        return sent, lengths
+        return sent, lengths, ids, lengths_ids
+
+    def prepare_sent_with_ids(self, sentences):
+        sentences_WITH_IDS = sentences
+        sentences = []
+        ids_ = []
+        for s1 in sentences_WITH_IDS:
+            id, sent = self.extract_sent_id(s1)
+            sentences.append(sent)
+            ids_.append(id)
+        lengths_ids = torch.LongTensor([len(i) + 2 for i in ids_])
+        ids = torch.LongTensor(lengths_ids.max().item(), lengths_ids.size(0)).fill_(
+            self.pad_index
+        )
+        ids[0] = self.eos_index
+        for i, s in enumerate(ids_):
+            if lengths_ids[i] > 2:  # if sentence not empty
+                ids[1 : lengths_ids[i] - 1, i].copy_(
+                    torch.from_numpy(s.astype(np.int64))
+                )
+            ids[lengths_ids[i] - 1, i] = self.eos_index
+        return ids, lengths_ids, sentences
+
+    def extract_sent_id(self, s):
+        """
+        Takes a sentence with ids and returns the id and the sentence
+        """
+
+        pos = np.where(s == self.sep_index)[0][0]
+        sentence = s[pos + 1 :]
+        ids = s[:pos]
+        return ids, sentence
 
     def remove_empty_sentences(self):
         """
@@ -145,6 +219,8 @@ class Dataset(object):
         indices = indices[self.lengths[indices] > 0]
         self.pos = self.pos[indices]
         self.lengths = self.pos[:, 1] - self.pos[:, 0]
+        if self.st_tests_scores is not None:
+            self.st_tests_scores = self.st_tests_scores[indices]
         logger.info("Removed %i empty sentences." % (init_size - len(indices)))
         self.check()
 
@@ -160,8 +236,44 @@ class Dataset(object):
         indices = indices[self.lengths[indices] <= max_len]
         self.pos = self.pos[indices]
         self.lengths = self.pos[:, 1] - self.pos[:, 0]
+        if self.st_tests_scores is not None:
+            self.st_tests_scores = self.st_tests_scores[indices]
         logger.info("Removed %i too long sentences." % (init_size - len(indices)))
         self.check()
+
+    def load_unit_test_data(self, unit_tests_path):
+        assert Path(unit_tests_path).is_file(), f"{unit_tests_path} is not a file"
+        with open(unit_tests_path, "r") as f:
+            for line in f:
+                json_line = json.loads(line)
+                for lang in self.unit_tests.keys():
+                    self.unit_tests[lang][json_line[TARGET_CLASS]] = json_line[
+                        f"{get_programming_language_name(lang)}_translated_tests"
+                    ]
+                    self.unit_tests_scores[json_line[TARGET_CLASS]] = {
+                        MUTATION_SCORE: float(json_line[MUTATION_SCORE]),
+                        ASSERTS_COUNT: int(json_line[ASSERTS_COUNT]),
+                    }
+
+    def compute_st_scores(self, params, dico):
+        assert self.unit_tests_st and self.has_sentence_ids
+        self.st_tests_scores = [
+            self.get_unit_test_scores(self.sent[a:b], dico, params) for a, b in self.pos
+        ]
+
+    def get_unit_test_scores(self, sentence, dico, params):
+        sent_id, _ = self.extract_sent_id(sentence)
+        sent_id = " ".join([dico[i] for i in sent_id])
+        sent_id = restore_segmentation_sentence(
+            sent_id, roberta_mode=params.roberta_mode
+        )
+        assert (
+            sent_id in self.unit_tests_scores
+        ), f"The unit test dataset is missing the element {sent_id}"
+        return (
+            self.unit_tests_scores[sent_id][MUTATION_SCORE],
+            self.unit_tests_scores[sent_id][ASSERTS_COUNT],
+        )
 
     def select_data(self, a, b):
         """
@@ -195,7 +307,7 @@ class Dataset(object):
                 sentence_ids = sentence_ids[: self.max_batch_size]
             pos = self.pos[sentence_ids]
             sent = [self.sent[a:b] for a, b in pos]
-            sent = self.batch_sentences(sent)
+            sent = self.batch_sentences(sent, self.has_sentence_ids)
             yield (sent, sentence_ids) if return_indices else sent
 
     def get_iterator(
@@ -206,6 +318,7 @@ class Dataset(object):
         n_sentences=-1,
         seed=None,
         return_indices=False,
+        st_scores_cutoff=None,
     ):
         """
         Return a sentences iterator.
@@ -226,6 +339,30 @@ class Dataset(object):
             indices = rng.permutation(len(self.pos))[:n_sentences]
         else:
             indices = np.arange(n_sentences)
+
+        if st_scores_cutoff is not None:
+            logger.info(f"st scores cutoff: {st_scores_cutoff}")
+            assert self.st_tests_scores is not None
+            assert len(self.st_tests_scores) == len(
+                indices
+            ), f"lenght of scores should be same as indices, were {len(st_scores_cutoff), len(indices)}"
+            initial_size = len(indices)
+            assert (
+                len(st_scores_cutoff) == 2
+            ), f"st_scores_cutoff should contain min mutation score and asserts, was {st_scores_cutoff}"
+            min_mutation_score, min_asserts = st_scores_cutoff
+
+            indices = np.array(
+                [
+                    i
+                    for i in indices
+                    if self.st_tests_scores[i][0] >= min_mutation_score
+                    and self.st_tests_scores[i][1] >= min_asserts
+                ]
+            )
+            logger.info(
+                f"st scores cutoff: removed {initial_size - len(indices)} element from the {initial_size} initial elements"
+            )
 
         # group sentences by lengths
         if group_by_size:
@@ -250,7 +387,9 @@ class Dataset(object):
             rng.shuffle(batches)
 
         # sanity checks
-        assert n_sentences == sum([len(x) for x in batches])
+        assert len(indices) == sum([len(x) for x in batches])
+        if st_scores_cutoff is None:
+            assert len(indices) == n_sentences
         assert lengths[indices].sum() == sum([lengths[x].sum() for x in batches])
         # assert set.union(*[set(x.tolist()) for x in batches]) == set(range(n_sentences))  # slow
 
@@ -260,7 +399,13 @@ class Dataset(object):
 
 class ParallelDataset(Dataset):
     def __init__(
-        self, sent_list, pos_list, params, span_prediction=False, has_sentences_id=None
+        self,
+        sent_list,
+        pos_list,
+        params,
+        span_prediction=False,
+        has_sentence_ids=None,
+        unit_tests_st=False,
     ):
         """
         :param sent_list: list of sentences tensors. The order is (src, tgt, (optional) span)
@@ -276,11 +421,8 @@ class ParallelDataset(Dataset):
         self.sep_index = params.sep_index
         self.batch_size = params.batch_size
         self.max_batch_size = params.max_batch_size
-        self.has_sentences_ids = (
-            has_sentences_id
-            if has_sentences_id is not None
-            else params.has_sentences_ids
-        )
+        self.has_sentence_ids = has_sentence_ids
+        self.unit_tests_st = unit_tests_st
 
         self.sent_list = sent_list
         self.pos_list = pos_list
@@ -304,54 +446,6 @@ class ParallelDataset(Dataset):
         Number of sentences in the dataset.
         """
         return len(self.pos_list[0])
-
-    def batch_sentences(self, sentences, split_sentences_ids=None):
-        """
-        Take as input a list of n sentences (torch.LongTensor vectors) and return
-        a tensor of size (slen, n) where slen is the length of the longest
-        sentence, and a vector lengths containing the length of each sentence.
-        """
-        if split_sentences_ids is None:
-            split_sentences_ids = self.has_sentences_ids
-        if split_sentences_ids:
-            sentences_WITH_IDS = sentences
-            sentences = []
-            ids_ = []
-            for s in sentences_WITH_IDS:
-                pos = np.where(s == self.sep_index)[0][0]
-                sentences.append(s[pos + 1 :])
-                ids_.append(s[:pos])
-
-            lengths_ids = torch.LongTensor([len(i) + 2 for i in ids_])
-            ids = torch.LongTensor(lengths_ids.max().item(), lengths_ids.size(0)).fill_(
-                self.pad_index
-            )
-
-            ids[0] = self.eos_index
-            for i, s in enumerate(ids_):
-                if lengths_ids[i] > 2:  # if sentence not empty
-                    ids[1 : lengths_ids[i] - 1, i].copy_(
-                        torch.from_numpy(s.astype(np.int64))
-                    )
-                ids[lengths_ids[i] - 1, i] = self.eos_index
-
-        else:
-            # sentences = sorted(sentences, key=lambda x: len(x), reverse=True)
-            ids = None
-            lengths_ids = None
-
-        lengths = torch.LongTensor([len(s) + 2 for s in sentences])
-        sent = torch.LongTensor(lengths.max().item(), lengths.size(0)).fill_(
-            self.pad_index
-        )
-
-        sent[0] = self.eos_index
-        for i, s in enumerate(sentences):
-            if lengths[i] > 2:  # if sentence not empty
-                sent[1 : lengths[i] - 1, i].copy_(torch.from_numpy(s.astype(np.int64)))
-            sent[lengths[i] - 1, i] = self.eos_index
-
-        return sent, lengths, ids, lengths_ids
 
     def check(self):
         """
@@ -379,7 +473,7 @@ class ParallelDataset(Dataset):
                 len(self.pos_list) == len(self.sent_list) == len(self.lengths_list) == 2
             )
             assert len(self.sent_list[0]) == len(self.sent_list[1])
-            if self.has_sentences_ids:
+            if self.has_sentence_ids:
                 assert all(self.lengths_list[0] > self.lengths_list[1])
             else:
                 assert all(self.lengths_list[0] == self.lengths_list[1])
@@ -390,7 +484,7 @@ class ParallelDataset(Dataset):
                 len(self.pos_list) == len(self.sent_list) == len(self.lengths_list) == 3
             )
             assert len(self.sent_list[0]) == len(self.sent_list[2])
-            if self.has_sentences_ids:
+            if self.has_sentence_ids:
                 assert all(self.lengths_list[0] > self.lengths_list[2])
             else:
                 assert all(self.lengths_list[0] == self.lengths_list[2])
@@ -467,7 +561,8 @@ class ParallelDataset(Dataset):
                 sentence_ids = sentence_ids[: self.max_batch_size]
             pos = [pos[sentence_ids] for pos in self.pos_list]
 
-            split_sentences_id = [self.has_sentences_ids for i in range(len(pos))]
+            split_sentences_id = [self.has_sentence_ids] * len(pos)
+            # Do not split sentence IDs for spans
             if self.span_prediction:
                 assert len(split_sentences_id) == 2
                 split_sentences_id[1] = False

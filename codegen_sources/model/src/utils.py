@@ -14,8 +14,8 @@ import random
 import re
 import subprocess
 import sys
-from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
+from pathlib import Path, PosixPath
+
 import psutil
 
 import numpy as np
@@ -23,14 +23,17 @@ import torch
 from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
 
 from .data.dictionary import NUM_SPECIAL_TOKENS
-from .logger import create_logger
 
-sys.path.append(str(Path(__file__).parents[3]))
-print("adding to path", str(Path(__file__).parents[3]))
+REPO_ROOT = Path(__file__).parents[3].absolute()
+sys.path.append(str(REPO_ROOT))
+print("adding to path", str(REPO_ROOT))
 TREE_SITTER_ROOT = Path(__file__).parents[3].joinpath("tree-sitter")
 import codegen_sources.preprocessing.lang_processors.cpp_processor
 import codegen_sources.preprocessing.lang_processors.java_processor
 import codegen_sources.preprocessing.lang_processors.python_processor
+from codegen_sources.test_generation.test_runners.evosuite_test_runners import (
+    SUPPORTED_LANGUAGES_FOR_TESTS,
+)
 from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
 from .logger import create_logger
 
@@ -44,15 +47,16 @@ dynamic_coeff = [
     "lambda_ae",
     "lambda_mt",
     "lambda_bt",
+    "lambda_st",
     "bt_sample_temperature",
+    "st_sample_temperature",
+    "st_sample_cache_ratio",
+    "st_beam_size",
     "lambda_classif",
     "lambda_do",
+    "st_min_asserts",
+    "st_min_mutation_score",
 ]
-
-EXT = {"python": "py", "java": "java", "cpp": "cpp"}
-TOFILL = {"python": "#TOFILL", "java": "//TOFILL", "cpp": "//TOFILL"}
-
-primitive_types = {"short", "int", "long", "float", "double", "boolean", "char"}
 
 MAX_VIRTUAL_MEMORY = 2 * 1024 * 1024 * 1024  # 2 GB
 
@@ -106,20 +110,6 @@ def batch_sentences(sentences, pad_index, eos_index):
     return sent, lengths
 
 
-def transform_to_java_object_type(t):
-    if t not in primitive_types:
-        return t
-    if t == "int":
-        return "Integer"
-    if t == "char":
-        return "Character"
-    return t.capitalize()
-
-
-def get_return_type(tokenized_java):
-    return tokenized_java.split("(")[0].split()[-2]
-
-
 def limit_virtual_memory(max_virtual_memory):
     # We do a soft limit in order to be able to change the limit later if needed
     return f"ulimit -S -v {max_virtual_memory}"
@@ -129,326 +119,6 @@ class AttrDict(dict):
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
-
-
-def return_script_not_found():
-    return "script_not_found", None
-
-
-def eval_state(proc, proc_name):
-    try:
-        try:
-            result, stderr = proc.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            c = (
-                "kill `ps aux | grep '"
-                + proc_name
-                + "' | grep -v jupyter | grep -v grep | awk '{print($2)}'`"
-            )
-            subprocess.run(
-                c, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            return "timeout", None
-        results = result.decode("utf8", errors="replace")
-        success, n_test = results.split("#Results:")[-1].split(",")
-        if int(success) == int(n_test):
-            return "success", None
-        else:
-            return "failure", result.decode("utf-8", errors="replace")
-    except KeyboardInterrupt:
-        raise
-    except:
-        return "error", stderr.decode("utf-8", errors="replace")
-
-
-def run_python_program(script_path, i):
-    proc = subprocess.Popen(
-        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; python {script_path}",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True,
-        executable="/bin/bash",
-    )
-    res = eval_state(proc, f"python {script_path}")
-    return res, i
-
-
-def run_java_program(script_path, i):
-    folder = os.path.dirname(script_path)
-    name = os.path.basename(script_path).split(".")[0]
-    proc = subprocess.Popen(
-        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} && module load java && javac {name}.java && java {name}",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True,
-        executable="/bin/bash",
-    )
-    res = eval_state(proc, f"java {name}")
-    return res, i
-
-
-def run_cpp_program(script_path, i):
-    folder = os.path.dirname(script_path)
-    name = os.path.basename(script_path).split(".")[0]
-    proc = subprocess.Popen(
-        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} && g++ {name}.cpp -o {name}_cpp && ./{name}_cpp",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True,
-        executable="/bin/bash",
-    )
-    res = eval_state(proc, f"{name}_cpp")
-    return res, i
-
-
-def make_arg_string(argtype, argval):
-    if "[" not in argtype:
-        return f"{argtype} {argval}"
-
-    dim = argtype.count("[")
-    argtype = argtype.replace("[", "").replace("]", "")
-    return f'{argtype} {argval} {"[ ]" * dim}'
-
-
-def convert_filled_arguments(script_model, f, lang, lang_processor, f_name=None):
-    assert lang in {"java", "cpp"}
-    header = []
-    arguments_gold = lang_processor.extract_arguments(script_model)
-    return_type_gold = get_return_type(script_model)
-
-    arguments_filled = lang_processor.extract_arguments(f)
-    return_type_filled = get_return_type(f)
-
-    if arguments_gold[0] == arguments_filled[0]:
-        return None
-    if f_name is None:
-        f_name = lang_processor.get_function_name(f)
-
-    argument_types_gold = [t.strip() for t in arguments_gold[0]]
-    arguments_strings = [
-        make_arg_string(arg_type, f"param{i}")
-        for i, arg_type in enumerate(argument_types_gold)
-    ]
-    new_function_lines = [
-        f'static {return_type_gold} f_filled({", ".join(arguments_strings)})',
-        "{",
-    ]
-
-    new_params_strings = []
-    for param_index, (param_type_gold, param_type_filled) in enumerate(
-        zip(argument_types_gold, arguments_filled[0])
-    ):
-        param_type_filled = param_type_filled.strip()
-        param_type_gold = param_type_gold.strip()
-        if param_type_filled == param_type_gold:
-            new_params_strings.append(f"param{param_index}")
-        elif lang == "cpp":
-            if "vector" in param_type_filled:
-                if "int" not in argument_types_gold:
-                    return None
-                ints_indices = [
-                    i
-                    for i, t in enumerate(argument_types_gold)
-                    if t == "int" and i > param_index
-                ]
-                if any([i > param_index for i in ints_indices]):
-                    array_length_arg = min([i for i in ints_indices if i > param_index])
-                else:
-                    array_length_arg = min(ints_indices)
-                new_function_lines.append(
-                    f'{param_type_filled.replace("&", "")} vect_param{param_index}(param{param_index}, param{param_index} + param{array_length_arg});'
-                )
-                new_params_strings.append(f"vect_param{param_index}")
-            elif param_type_filled == "string" and "char" in param_type_gold:
-                new_function_lines.append(
-                    f'{param_type_filled.replace("&", "")} string_param{param_index}(param{param_index});'
-                )
-                new_params_strings.append(f"string_param{param_index}")
-            elif param_type_gold == "string" and "char" in param_type_filled:
-                new_function_lines.append(
-                    f"char char_arr_param{param_index}[param{param_index}.length() + 1];"
-                )
-                new_function_lines.append(
-                    f"strcopy(char_arr_param{param_index}, param{param_index}.c_str());"
-                )
-                new_params_strings.append(f"char_arr_param{param_index}")
-            else:
-                new_params_strings.append(f"({param_type_filled}) param{param_index}")
-        elif lang == "java":
-            if (
-                param_type_filled == "String" and "char" in param_type_gold
-            ) or param_type_filled == transform_to_java_object_type(param_type_gold):
-                new_params_strings.append(
-                    f"{param_type_filled}.valueOf(param{param_index})"
-                )
-                header.append("#include <cstring>")
-            elif param_type_gold == "String":
-                new_params_strings.append(f"param{param_index}.toCharArray()")
-            else:
-                new_params_strings.append(f"({param_type_filled}) param{param_index}")
-        else:
-            return None
-
-    inner_function_name = "f_filled_inner"
-    outer_f_return_string = f'{inner_function_name}({",".join(new_params_strings)})'
-    if return_type_filled != return_type_gold:
-        outer_f_return_string = f"({return_type_gold}) {outer_f_return_string}"
-    new_function_lines += [f"return {outer_f_return_string};", "}"]
-
-    f = lang_processor.detokenize_code(f.replace(f_name, inner_function_name))
-    return "\n".join(list(set(header))) + script_model.replace(
-        TOFILL[lang], "\n".join([f, "\n"] + new_function_lines)
-    )
-
-
-def submit_functions(
-    functions_list,
-    id,
-    ref,
-    lang,
-    outfolder,
-    script_folder,
-    retry_mismatching_types,
-    roberta_mode=False,
-):
-    lang_processor = LangProcessor.processors[lang](root_folder=TREE_SITTER_ROOT)
-    results_list = []
-    i = id.rstrip()
-    for try_id, f_fill in enumerate(functions_list):
-        f = f_fill.rstrip()
-        script_model_path = os.path.join(script_folder, f"{lang}/{i}.{EXT[lang]}")
-        if os.path.exists(script_model_path):
-            script_model = open(script_model_path, "r", encoding="utf-8").read()
-            try:
-                f_name = lang_processor.get_function_name(f)
-                f = f.replace(f_name, "f_filled")
-            except:
-                results_list.append(("error", "Could not replace function name"))
-            if f_fill == ref:
-                results_list.append(("success", "identical to gold"))
-                return results_list, i
-            f = (
-                lang_processor.detokenize_code(f)
-                if not roberta_mode
-                else f.replace("#NEWLINE", "\n")
-            )
-            script = script_model.replace(TOFILL[lang], f)
-            if lang == "python":
-                script = f"import numpy as np \nimport math\nfrom math import *\nimport collections\nfrom collections import *\nimport heapq\nimport itertools\nimport random\nimport sys\n\n{script}"
-            script_path = f"{outfolder}/{i}.{EXT[lang]}"
-            open(script_path, "w", encoding="utf-8").write(script)
-            run_pg = globals()[f"run_{lang}_program"]
-            result, _ = run_pg(script_path, i)
-            if result[0] == "success":
-                results_list.append(result)
-                return results_list, i
-            elif retry_mismatching_types and lang in {"cpp", "java"}:
-                try:
-                    script_transform_args = convert_filled_arguments(
-                        script_model, f_fill, lang, lang_processor, f_name=f_name
-                    )
-                except KeyboardInterrupt:
-                    raise
-                except:
-                    script_transform_args = None
-
-                if script_transform_args is not None:
-                    open(script_path, "w", encoding="utf-8").write(
-                        script_transform_args
-                    )
-                    run_pg = globals()[f"run_{lang}_program"]
-                    result2, _ = run_pg(script_path, i)
-                    if result2[0] == "success":
-                        results_list.append(result2)
-                        return results_list, i
-                    else:
-                        result = (
-                            result2[0],
-                            "".join(
-                                [
-                                    result[1] if result[1] else "",
-                                    f"|| second run handling types mismatch: ## function ## {script_transform_args} ## output ## {result2[1]}",
-                                ]
-                            ),
-                        )
-
-            results_list.append(result)
-        else:
-            return [return_script_not_found()], i
-    return results_list, i
-
-
-def eval_function_output(
-    ref_path,
-    hyp_paths,
-    id_path,
-    lang2,
-    outfolder,
-    script_folder,
-    retry_mismatching_types,
-    roberta_mode,
-):
-    functions = list(zip(*[read_file_lines(path) for path in hyp_paths]))
-    ids = read_file_lines(id_path)
-    refs = read_file_lines(ref_path)
-    assert len(functions) == len(ids), f"{len(functions), len(ids)}"
-    assert len(functions) == len(refs), f"{len(functions), len(refs)}"
-    lang = lang2.split("_")[0]
-
-    jobs = []
-    executor = ProcessPoolExecutor()
-    for f, i, r in zip(functions, ids, refs):
-        jobs.append(
-            executor.submit(
-                submit_functions,
-                f,
-                i,
-                r,
-                lang,
-                outfolder,
-                script_folder,
-                retry_mismatching_types,
-                roberta_mode,
-            )
-        )
-
-    results_stats = {
-        "success": 0,
-        "failure": 0,
-        "error": 0,
-        "timeout": 0,
-        "script_not_found": 0,
-        "identical_gold": 0,
-    }
-    results = ["" for _ in range(len(ids))]
-    for job in jobs:
-        results_list, i = job.result()
-        nb_success = sum([r[0] == "success" for r in results_list])
-        nb_identical = sum(
-            [r[0] == "success" and r[1] == "identical to gold" for r in results_list]
-        )
-        assert nb_success <= 1, "Should stop after first success"
-        if nb_success > 0:
-            results_stats["success"] += 1
-            if nb_identical > 0:
-                results_stats["identical_gold"] += 1
-        else:
-            results_stats[results_list[0][0]] += 1
-        results[ids.index(i + "\n")] = []
-        for result, stderr in results_list:
-            if stderr is not None:
-                stderr = stderr.replace("\n", " ")
-            else:
-                stderr = "None"
-            results[ids.index(i + "\n")].append(f"{result} : {stderr}")
-
-    results_stats["total"] = len(functions)
-    results_stats["total_evaluated"] = (
-        len(functions) - results_stats["script_not_found"]
-    )
-    results_stats = {k: results_stats[k] for k in sorted(results_stats.keys())}
-
-    return results_stats, results
 
 
 def read_file_lines(hyp_path):
@@ -597,10 +267,8 @@ def restore_roberta_segmentation_string(text_inputs, single_line=False):
 def restore_roberta_segmentation_sentence(line, single_line=False):
     byte_encoder = bytes_to_unicode()
     byte_decoder = {v: k for k, v in byte_encoder.items()}
-    text = line.replace(" ", "")
-    res = bytearray([byte_decoder.get(c, 0) for c in text]).decode(
-        "utf-8", errors="replace"
-    )
+    text = "".join(line.replace(" ", ""))
+    res = bytearray([byte_decoder[c] for c in text]).decode("utf-8", errors="replace")
     return res.replace("\n", "#NEWLINE") if single_line else res
 
 
@@ -1354,6 +1022,13 @@ def add_noise(words, lengths, params, max_vocab, rng=None, torch_rng=None):
     return words, lengths
 
 
+def safe_index(l, elmt):
+    try:
+        return l.index(elmt)
+    except ValueError:
+        return None
+
+
 def convert_to_text(batch, lengths, dico, params, generate_several_reps=False):
     """
     Convert a batch of sentences to a list of text sentences.
@@ -1384,7 +1059,8 @@ def convert_to_text(batch, lengths, dico, params, generate_several_reps=False):
         sentences.append([])
         for rep in range(nb_repetitions):
             words = []
-            for k in range(1, lengths[j]):
+            length_j = lengths[j].max() if len(lengths.shape) == 2 else lengths[j]
+            for k in range(1, length_j):
                 next_element = (
                     batch[k, j] if len(batch.shape) == 2 else batch[k, rep, j]
                 )
@@ -1396,3 +1072,76 @@ def convert_to_text(batch, lengths, dico, params, generate_several_reps=False):
         return sentences
     else:
         return [s[0] for s in sentences]
+
+
+def get_programming_language_name(lang):
+    if lang in SUPPORTED_LANGUAGES_FOR_TESTS:
+        return lang
+    elif lang.split("_")[0] in SUPPORTED_LANGUAGES_FOR_TESTS:
+        return lang.split("_")[0]
+    else:
+        raise ValueError(
+            f"The language {lang} is not supported for unit tests self-training. "
+            f"The supported languages are {SUPPORTED_LANGUAGES_FOR_TESTS}"
+        )
+
+
+def get_java_compilation_errors(code, timeout=20):
+    file = write_java_function(code)
+    comp_cmd = f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; {os.path.join(get_java_bin_path(), 'javac')} {file}"
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            comp_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True,
+            executable="/bin/bash",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    file.unlink()
+    classfile = file.with_suffix(".class")
+    assert (
+        timed_out or proc.returncode != 0 or classfile.is_file()
+    ), "compilation succeeded but .class file does not exist"
+    assert "tmp_folder" in str(file.parent), file.parent
+    for compiled_f in file.parent.glob("*"):
+        compiled_f.unlink()
+    file.parent.rmdir()
+    if timed_out:
+        return "timeout"
+    return "success" if proc.returncode == 0 else proc.stderr.decode()
+
+
+def write_java_function(f: str, out_path: PosixPath = Path("/tmp/java_functions/")):
+    rand_folder = str(random.getrandbits(64))
+    classname = f"JAVA_FUNC"
+    tmp_folder = out_path.joinpath(f"tmp_folder_{rand_folder}")
+    out_file = tmp_folder.joinpath(classname + ".java")
+    tmp_folder.mkdir(parents=True, exist_ok=True)
+    java_processor = LangProcessor.processors["java"](root_folder=TREE_SITTER_ROOT)
+
+    with open(out_file, "w") as writefile:
+        writefile.write(
+            """
+import java.util.*;
+import java.util.stream.*;
+import java.lang.*;
+import javafx.util.Pair;
+"""
+        )
+        writefile.write("public class " + classname + "{\n")
+        code = f.replace("\r", "")
+        writefile.write(java_processor.detokenize_code(code))
+        writefile.write("}\n")
+    return out_file
+
+
+def get_java_bin_path():
+    JAVA_HOME = "/public/apps/java/jdk/1.8.0_131/bin/"
+    if Path(JAVA_HOME).is_dir():
+        return JAVA_HOME
+    else:
+        return ""

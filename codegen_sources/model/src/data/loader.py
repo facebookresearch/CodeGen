@@ -14,7 +14,9 @@ import torch
 from .dataset import StreamDataset, Dataset, ParallelDataset
 from .dictionary import BOS_WORD, EOS_WORD, PAD_WORD, UNK_WORD, MASK_WORD
 
+SELF_TRAINED = "self_training"
 DATASET_SPLITS = ["train", "valid", "test"]
+TRAIN_SPLITS = {"train", SELF_TRAINED}
 
 logger = getLogger()
 
@@ -155,13 +157,15 @@ def load_mono_data(params, data):
         data["mono"][lang] = {}
         data["mono_stream"][lang] = {}
 
-        for splt in DATASET_SPLITS:
-            # no need to load training data for evaluation
-            if splt == "train" and params.eval_only:
+        for splt, data_path in params.mono_dataset[lang].items():
+            if splt == SELF_TRAINED and lang not in params.st_src_langs:
+                # continue if not doing self training for this language
                 continue
-
+            # no need to load training data for evaluation
+            if splt in TRAIN_SPLITS and params.eval_only:
+                continue
             # load data / update dictionary parameters / update data
-            mono_data = load_binarized(params.mono_dataset[lang][splt], params)
+            mono_data = load_binarized(data_path, params)
             set_dico_parameters(params, data, mono_data["dico"])
 
             # create stream dataset
@@ -172,7 +176,7 @@ def load_mono_data(params, data):
 
             # if there are several processes on the same machine, we can split the dataset
             if (
-                splt == "train"
+                splt in TRAIN_SPLITS
                 and params.split_data
                 and 1
                 < params.n_gpu_per_node
@@ -186,20 +190,38 @@ def load_mono_data(params, data):
                 data["mono_stream"][lang][splt].select_data(a, b)
 
             # for denoising auto-encoding and online back-translation, we need a non-stream (batched) dataset
-            if lang in params.ae_steps or lang in params.bt_src_langs:
+            if (
+                lang in params.ae_steps
+                or lang in params.bt_src_langs
+                or lang
+                in [l1 for l1, l2 in params.cmt_steps]
+                + [l1 for l1, l2 in params.disc_steps]
+                or (lang in params.st_src_langs and splt == SELF_TRAINED)
+            ):
 
                 # create batched dataset
                 dataset = Dataset(
-                    mono_data["sentences"], mono_data["positions"], params
+                    mono_data["sentences"],
+                    mono_data["positions"],
+                    params,
+                    has_sentence_ids=(splt, (lang,)) in params.has_sentence_ids,
+                    unit_tests_st=splt == SELF_TRAINED,
                 )
-
                 # remove empty and too long sentences
-                if splt == "train":
+                if splt in TRAIN_SPLITS:
                     dataset.remove_empty_sentences()
                     dataset.remove_long_sentences(params.max_len)
+                if splt == SELF_TRAINED:
+                    dataset.compute_st_scores(params, data["dico"])
+                    data[f"java_st_unit_tests"] = dataset.unit_tests
+                    data[f"java_st_tests_scores"] = dataset.st_tests_scores
 
                 # if there are several processes on the same machine, we can split the dataset
-                if splt == "train" and params.n_gpu_per_node > 1 and params.split_data:
+                if (
+                    splt in TRAIN_SPLITS
+                    and params.n_gpu_per_node > 1
+                    and params.split_data
+                ):
                     n_sent = len(dataset) // params.n_gpu_per_node
                     a = n_sent * params.local_rank
                     b = n_sent * params.local_rank + n_sent
@@ -244,7 +266,7 @@ def load_para_data(params, data):
         for splt in DATASET_SPLITS:
 
             # no need to load training data for evaluation
-            if splt == "train" and params.eval_only:
+            if splt in TRAIN_SPLITS and params.eval_only:
                 continue
 
             # for back-translation, we can't load training data
@@ -290,8 +312,7 @@ def load_para_data(params, data):
                 pos_list,
                 params,
                 span_prediction=tgt_data["dico"] is None,
-                has_sentences_id=splt != "train"
-                and params.has_sentences_ids,  # TODO handle it with a parameter instead
+                has_sentence_ids=(splt, (src, tgt)) in params.has_sentence_ids,
             )
 
             # remove empty and too long sentences
@@ -304,7 +325,7 @@ def load_para_data(params, data):
                 dataset.tokens_per_batch = -1
 
             # if there are several processes on the same machine, we can split the dataset
-            if splt == "train" and params.n_gpu_per_node > 1 and params.split_data:
+            if splt in TRAIN_SPLITS and params.n_gpu_per_node > 1 and params.split_data:
                 n_sent = len(dataset) // params.n_gpu_per_node
                 a = n_sent * params.local_rank
                 b = n_sent * params.local_rank + n_sent
@@ -327,28 +348,27 @@ def check_data_params(params):
 
     # check languages
     params.langs = params.lgs.split("-") if params.lgs != "debug" else ["en"]
-    assert len(params.langs) == len(set(params.langs)) >= 1
+    assert len(params.langs) == len(set(params.langs)) >= 1, [
+        l for l in params.langs if params.langs.count(l) >= 2
+    ]
 
     # assert sorted(params.langs) == params.langs
     params.id2lang = {k: v for k, v in enumerate(sorted(params.langs))}
     params.lang2id = {k: v for v, k in params.id2lang.items()}
     params.n_langs = len(params.langs)
-    params.lang_map_in = {}
-    params.lang_map_out = {}
-    if params.mt_lgs_id_mapping != "":
-        mappings = params.mt_lgs_id_mapping.split(",")
+    if params.lgs_id_mapping != "":
+        mappings = params.lgs_id_mapping.split(",")
         for m in mappings:
             split = m.split(":")
-            assert (
-                len(split) == 2 and len(split[1].split("-")) == 2
-            ), f"Cannot parse {m} in {params.mt_lgs_id_mapping}"
-            source = split[0]
+            assert len(split) == 2, f"Cannot parse {m} in {params.lgs_id_mapping}"
+            source, dest = split
             assert (
                 source in params.langs
             ), f"unknown source {source} from {m}. Not part of the languages in {params.langs}"
-            in_dest, out_dest = split[1].split("-")
-            params.lang_map_in[source] = in_dest
-            params.lang_map_out[source] = out_dest
+            assert (
+                dest in params.langs
+            ), f"unknown destination language {dest} from {m}. Not part of the languages in {params.langs}"
+            params.lang2id[source] = params.lang2id[dest]
 
     # CLM steps
     clm_steps = [s.split("-") for s in params.clm_steps.split(",") if len(s) > 0]
@@ -376,6 +396,7 @@ def check_data_params(params):
     params.mt_steps = [
         tuple(s.split("-")) for s in params.mt_steps.split(",") if len(s) > 0
     ]
+
     assert all([len(x) == 2 for x in params.mt_steps])
     assert all(
         [l1 in params.langs and l2 in params.langs for l1, l2 in params.mt_steps]
@@ -447,6 +468,33 @@ def check_data_params(params):
     assert len(params.bt_steps) == 0 or not params.encoder_only
     params.bt_src_langs = [l1 for l1, _, _ in params.bt_steps]
 
+    # self-training steps
+    params.st_steps = [
+        (s.split("-")[0], tuple(s.split("-")[1].split("|")))
+        for s in params.st_steps.split(",")
+        if len(s) > 0
+    ]
+    assert all([len(x) == 2 for x in params.st_steps])
+
+    assert all(
+        [
+            l1 in params.langs and all([l2 in params.langs for l2 in langs2])
+            for l1, langs2 in params.st_steps
+        ]
+    ), params.st_steps
+    assert all([l1 != l2 for l1, langs2 in params.st_steps for l2 in langs2])
+    assert len(params.st_steps) == len(set(params.st_steps))
+    assert all([len(langs2) > 0 for l1, langs2 in params.st_steps]), params.st_steps
+    params.st_src_langs = [l1 for l1, _ in params.st_steps]
+    params.st_tgt_langs = list(
+        set([l2 for _, langs2 in params.st_steps for l2 in langs2])
+    )
+    if len(params.st_src_langs) > 0:
+        logger.info(f"st source langs: {params.st_src_langs}")
+        logger.info(f"st target langs: {params.st_tgt_langs}")
+        # unit tests path
+        assert os.path.isfile(params.unit_tests_path), params.unit_tests_path
+
     # check monolingual datasets
     required_mono = set(
         [l1 for l1, l2 in (params.mlm_steps + params.clm_steps) if l2 is None]
@@ -461,6 +509,12 @@ def check_data_params(params):
         for lang in params.langs
         if lang in required_mono
     }
+    for lang in params.st_src_langs:
+        if lang not in params.mono_dataset:
+            params.mono_dataset[lang] = dict()
+        params.mono_dataset[lang][SELF_TRAINED] = os.path.join(
+            params.data_path, "%s.%s.pth" % (SELF_TRAINED, lang)
+        )
     for paths in params.mono_dataset.values():
         for p in paths.values():
             if not os.path.isfile(p):
@@ -496,9 +550,22 @@ def check_data_params(params):
         + params.classif_steps
         + params.do_steps
     )
-    required_para = required_para_train | set(
-        [(l2, l3) for _, l2, l3 in params.bt_steps]
+    required_para = (
+        required_para_train
+        | set([(l2, l3) for _, l2, l3 in params.bt_steps])
+        | set([(l1, l2) for l1, langs2 in params.st_steps for l2 in langs2])
+        | set([(l2, l1) for l1, langs2 in params.st_steps for l2 in langs2])
+        | set(
+            [
+                (l2_1, l2_2)
+                for l1, langs2 in params.st_steps
+                for l2_1 in langs2
+                for l2_2 in langs2
+                if l2_1 != l2_2
+            ]
+        )
     )
+
     params.para_dataset = {
         (src, tgt): {
             splt: (
@@ -559,13 +626,41 @@ def check_data_params(params):
     params.stopping_criterion = params.stopping_criterion.replace(
         "#obf_proba", str(params.obf_proba)
     )
-    assert not (
-        params.eval_computation and not params.has_sentences_ids
-    ), "Sentence IDs are necessary to compute the computational accuracy."
+
+    # parse which datasets should have sentence ids
+    params.has_sentence_ids = (
+        [s.split("|") for s in params.has_sentence_ids.split(",")]
+        if params.has_sentence_ids != ""
+        else []
+    )
+
+    assert all([len(x) == 2 for x in params.has_sentence_ids]), params.has_sentence_ids
+    params.has_sentence_ids = [
+        (split, tuple(langs.split("-"))) for split, langs in params.has_sentence_ids
+    ]
+    assert all(
+        [len(langs) == 1 or len(langs) == 2 for split, langs in params.has_sentence_ids]
+    ), params.has_sentence_ids
+    for split, langs in params.has_sentence_ids:
+        if langs == ("para",) or langs == ("all",):
+            params.has_sentence_ids += [
+                (split, langs) for langs in params.para_dataset.keys()
+            ]
+        if langs == ("mono",) or langs == ("all",):
+            params.has_sentence_ids += [
+                (split, (lang,)) for lang in params.mono_dataset.keys()
+            ]
+    assert all(
+        [
+            all([lang in params.langs + ["para", "mono", "all"] for lang in langs])
+            for split, langs in params.has_sentence_ids
+        ]
+    ), params.has_sentence_ids
+    assert len(set(params.has_sentence_ids)) == len(params.has_sentence_ids)
+
     assert (
         len(params.mono_dataset) > 0 or len(params.para_dataset) > 0
     ), "No dataset to be loaded, you probably forget to set a training step."
-
     # assert all([all([os.path.isfile(p1) and os.path.isfile(p2) for p1, p2 in paths.values()]) for paths in params.para_dataset.values()])
 
     # check that we can evaluate on BLEU

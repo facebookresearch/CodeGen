@@ -16,19 +16,32 @@ import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score, average_precision_score
 
+from .comp_acc_computation import load_evosuite_transcoder_tests, eval_function_output
 from .subtoken_score import run_subtoken_score
 from ..data.loader import DATASET_SPLITS
+from ..trainer import get_programming_language_name
 from ..utils import (
     to_cuda,
     restore_segmentation,
     concat_batches,
     vizualize_translated_files,
     vizualize_do_files,
-    eval_function_output,
     show_batch,
     add_noise,
     convert_to_text,
+    REPO_ROOT,
 )
+import sys
+
+sys.path.append(REPO_ROOT)
+from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
+from codegen_sources.test_generation.test_runners.python_test_runner import (
+    PythonTestRunner,
+)
+
+SRC_ST_LANGS = "java"
+
+TARGET_ST_LANG = {"cpp", "python"}
 
 EVAL_OBF_PROBAS = []
 
@@ -68,8 +81,21 @@ class Evaluator(object):
             self.params.eval_scripts_folders = {}
             if params.eval_bleu or params.eval_subtoken_score:
                 self.create_reference_files()
+        if self.params.eval_st:
+            logger.info("Loading evosuite tests")
+            self.evosuite_tests_dico = load_evosuite_transcoder_tests()
+        else:
+            self.evosuite_tests_dico = None
 
-    def get_iterator(self, data_set, lang1, lang2=None, stream=False, span=None):
+    def get_iterator(
+        self,
+        data_set,
+        lang1,
+        lang2=None,
+        stream=False,
+        span=None,
+        st_scores_cutoff=None,
+    ):
         """
         Create a new iterator for a dataset.
         """
@@ -128,6 +154,7 @@ class Evaluator(object):
             assert lang1 < lang2, (lang1, lang2)
 
             for data_set in EVAL_DATASET_SPLITS:
+                has_sent_ids = (data_set, (lang1, lang2)) in params.has_sentence_ids
 
                 params.eval_scripts_folders[(lang1, lang2, data_set)] = os.path.join(
                     params.eval_scripts_root,
@@ -192,7 +219,7 @@ class Evaluator(object):
                         spans.extend(list(span_batch.T))
                     lang1_txt.extend(convert_to_text(sent1, len1, self.dico, params))
                     lang2_txt.extend(convert_to_text(sent2, len2, self.dico, params))
-                    if params.has_sentences_ids:
+                    if has_sent_ids:
                         assert id1.equal(id2) and lenid1.equal(lenid2)
                         id_txt.extend(convert_to_text(id1, lenid1, self.dico, params))
 
@@ -217,7 +244,7 @@ class Evaluator(object):
                     lang2_path, roberta_mode=params.roberta_mode, single_line=True
                 )
 
-                if params.has_sentences_ids:
+                if has_sent_ids:
                     with open(id_path, "w", encoding="utf-8") as f:
                         f.write("\n".join(id_txt) + "\n")
                     restore_segmentation(
@@ -281,6 +308,15 @@ class Evaluator(object):
                 for keys in set(
                     params.mt_steps
                     + [(l2, l3) for _, l2, l3 in params.bt_steps]
+                    + [(l1, l2) for l1, langs2 in params.st_steps for l2 in langs2]
+                    + [(l2, l1) for l1, langs2 in params.st_steps for l2 in langs2]
+                    + [
+                        (l2_1, l2_2)
+                        for l1, langs2 in params.st_steps
+                        for l2_1 in langs2
+                        for l2_2 in langs2
+                        if l2_1 != l2_2
+                    ]
                     + params.mt_spans_steps
                 ):
                     spans = None
@@ -717,13 +753,14 @@ class EncDecEvaluator(Evaluator):
         assert lang2 in params.langs
         rng = np.random.RandomState(0)
         torch_rng = torch.Generator().manual_seed(0)
-
+        eval_st = params.eval_st
         if not params.is_master or "cl" in lang1:
             # Computing the accuracy on every node is useful for debugging but
             # no need to evaluate spend too much time on the evaluation when not on master
             eval_bleu = False
             eval_computation = False
             eval_subtoken_score = False
+            eval_st = False
 
         # store hypothesis to compute BLEU score
         if params.eval_bleu_test_only:
@@ -834,8 +871,7 @@ class EncDecEvaluator(Evaluator):
                 if (
                     eval_bleu or eval_computation or eval_subtoken_score
                 ) and data_set in datasets_for_bleu:
-                    f_ids = []
-                    len_v = (3 * len2 + 10).clamp(max=params.max_len)
+                    len_v = (3 * len1 + 10).clamp(max=params.max_len)
                     if params.beam_size == 1:
                         if params.number_samples > 1:
                             assert params.eval_temperature is not None
@@ -939,6 +975,25 @@ class EncDecEvaluator(Evaluator):
                     roberta_mode=params.roberta_mode,
                 )
 
+            if (
+                eval_st
+                and data_set in datasets_for_bleu
+                and get_programming_language_name(lang1) == SRC_ST_LANGS
+                and get_programming_language_name(lang2) in TARGET_ST_LANG
+            ):
+                logger.info("Computing ST comp acc")
+                self.compute_comp_acc(
+                    data_set,
+                    hyp_paths,
+                    hypothesis,
+                    lang1,
+                    lang2,
+                    params,
+                    ref_path,
+                    scores,
+                    roberta_mode=params.roberta_mode,
+                    evosuite_functions=True,
+                )
             if eval_subtoken_score and data_set in datasets_for_bleu:
                 subtoken_level_scores = run_subtoken_score(ref_path, hyp_paths)
                 for score_type, value in subtoken_level_scores.items():
@@ -977,8 +1032,8 @@ class EncDecEvaluator(Evaluator):
                 # TODO clean lang1
                 vizualize_do_files(lang1.split("_")[0], src_path, ref_path, hyp_paths)
 
+    @staticmethod
     def write_hypo_ref_src(
-        self,
         data_set,
         hypothesis,
         lang1,
@@ -1038,8 +1093,9 @@ class EncDecEvaluator(Evaluator):
         ref_path,
         scores,
         roberta_mode=False,
+        evosuite_functions=False,
     ):
-
+        assert self.evosuite_tests_dico is not None or not evosuite_functions
         func_run_stats, func_run_out = eval_function_output(
             ref_path,
             hyp_paths,
@@ -1049,11 +1105,14 @@ class EncDecEvaluator(Evaluator):
             EVAL_SCRIPT_FOLDER[data_set],
             params.retry_mistmatching_types,
             roberta_mode,
+            evosuite_functions=evosuite_functions,
+            evosuite_tests=self.evosuite_tests_dico,
         )
         out_paths = []
-        success_for_beam_number = [0 for i in range(len(hypothesis[0]))]
+        success_for_beam_number = [0 for _ in range(len(hypothesis[0]))]
+        prefix = "st" if evosuite_functions else ""
         for beam_number in range(len(hypothesis[0])):
-            out_name = "hyp{0}.{1}-{2}.{3}_beam{4}.out.txt".format(
+            out_name = prefix + "hyp{0}.{1}-{2}.{3}_beam{4}.out.txt".format(
                 scores["epoch"], lang1, lang2, data_set, beam_number
             )
             out_path = os.path.join(params.hyp_path, out_name)
@@ -1067,7 +1126,7 @@ class EncDecEvaluator(Evaluator):
                     )
                     if result_for_beam.startswith("success"):
                         success_for_beam_number[beam_number] += 1
-                    f.write((result_for_beam) + "\n")
+                    f.write(result_for_beam + "\n")
                 f.write("\n")
         vizualize_translated_files(
             lang1,
@@ -1079,12 +1138,13 @@ class EncDecEvaluator(Evaluator):
             out_paths,
         )
         logger.info(
-            "Computation res %s %s %s : %s"
+            prefix
+            + "Computation res %s %s %s : %s"
             % (data_set, lang1, lang2, json.dumps(func_run_stats))
         )
-        scores["%s_%s-%s_mt_comp_acc" % (data_set, lang1, lang2)] = func_run_stats[
-            "success"
-        ] / (
+        scores[
+            "%s_%s-%s_mt_comp_acc" % (data_set + prefix, lang1, lang2)
+        ] = func_run_stats["success"] / (
             func_run_stats["total_evaluated"]
             if func_run_stats["total_evaluated"]
             else 1
@@ -1092,7 +1152,7 @@ class EncDecEvaluator(Evaluator):
         for beam_number, success_for_beam in enumerate(success_for_beam_number):
             scores[
                 "%s_%s-%smt_comp_acc_contrib_beam_%i"
-                % (data_set, lang1, lang2, beam_number)
+                % (data_set + prefix, lang1, lang2, beam_number)
             ] = (
                 success_for_beam
                 / (

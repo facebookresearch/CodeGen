@@ -908,16 +908,16 @@ class TransformerModel(nn.Module):
         #     print("")
 
         # select the best hypotheses
-        tgt_len = src_len.new(bs)
+        tgt_len = src_len.new(bs, beam_size)
         best = []
 
         for i, hypotheses in enumerate(generated_hyps):
             sorted_hyps = [
                 h[1] for h in sorted(hypotheses.hyp, key=lambda x: x[0], reverse=True)
             ]
-            tgt_len[i] = (
-                max([len(hyp) for hyp in sorted_hyps]) + 1
-            )  # +1 for the <EOS> symbol
+            for j, hyp in enumerate(sorted_hyps):
+                tgt_len[i, j] = len(hyp) + 1
+                # +1 for the <EOS> symbol
             best.append(sorted_hyps)
 
         # generate target batch

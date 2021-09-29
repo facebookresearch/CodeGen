@@ -1,7 +1,7 @@
 
 # TransCoder
 
-Pytorch original implementation of TransCoder in [Unsupervised Translation of Programming Languages](https://arxiv.org/pdf/2006.03511.pdf)
+Pytorch implementation of TransCoder in [Unsupervised Translation of Programming Languages](https://arxiv.org/pdf/2006.03511.pdf)
 ![Model](https://dl.fbaipublicfiles.com/transcoder/TransCoder_Schema.jpg)
 
 ## Release
@@ -62,7 +62,7 @@ In our case we use NGPU=8
 First get raw data from google big Query ([see](GoogleBigQuery_README.md)).
 
 Then run the following command to get the monolingual data for MLM:
-```
+```bash
 python -m codegen_sources.preprocessing.preprocess 
 <DATASET_PATH>                                     # folder containing raw data i.e json.gz
 --langs cpp java python                            # languages to prepocess
@@ -83,7 +83,7 @@ Simpy download the binarized data [transcoder_test_set.zip](https://dl.fbaipubli
 
 ### Train
 Train a MLM Model:
-```
+```bash
 python codegen_sources/model/train.py 
 
 ## main parameters
@@ -125,7 +125,7 @@ python codegen_sources/model/train.py
 
 To train transcoder from a pretrained model (MLM or DOBF - for DOBF [see]):
  
-``` 
+```bash 
 python codegen_sources/model/train.py   
 
 ## main parameters
@@ -171,7 +171,7 @@ python codegen_sources/model/train.py
 --optimizer 'adam_inverse_sqrt,warmup_updates=10000,lr=0.0001,weight_decay=0.01' \
 --eval_bleu true \
 --eval_computation true \
---has_sentences_ids true \
+--has_sentence_ids "valid|para,test|para" \
 --generate_hypothesis true \
 --save_periodic 1 \
 --validation_metrics 'valid_python_sa-java_sa_mt_comp_acc'  
@@ -189,6 +189,7 @@ Evaluation is done after each training epoch. But, if you want to evaluate a mod
 
 For instance:
 ```bash
+MODEL=<PATH_TO_MODEL>
 python codegen_sources/model/train.py \
 --exp_name transcoder_eval \
 --dump_path '<DUMP_PATH>' \
@@ -210,10 +211,10 @@ python codegen_sources/model/train.py \
 --max_batch_size 128 \
 --eval_bleu true \
 --eval_computation true \
---has_sentences_ids true \
+--has_sentence_ids "valid|para,test|para" \
 --generate_hypothesis true \
 --save_periodic 1 \
---reload_model "/checkpoint/broz/Transcoder_saved_models/TransCoder_model_1.pth,/checkpoint/broz/Transcoder_saved_models/TransCoder_model_1.pth" \
+--reload_model "$MODEL,$MODEL" \
 --reload_encoder_for_decoder false \
 --eval_only true \
 --n_sentences_eval 1500

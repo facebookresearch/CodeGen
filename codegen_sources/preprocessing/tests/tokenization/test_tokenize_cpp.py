@@ -18,7 +18,6 @@ from codegen_sources.preprocessing.tests.tokenization.tokenization_tests_utils i
 
 processor = CppProcessor(root_folder=Path(__file__).parents[4].joinpath("tree-sitter"))
 
-
 TESTS = []
 TESTS.append(
     (
@@ -305,11 +304,24 @@ char a = 'a' ;
     )
 ]
 
+TESTS_DETOKENIZE_CHARS = [
+    (
+        "char a = 'a';",
+        r"""char a = 'a' ;
+""",
+    )
+]
+
 TESTS_STRINGS = [
     (
         r"""
 string s = "Hello !" ;""",
         ["string", "s", "=", f'" Hello ▁ ! "', ";"],
+    ),
+    (
+        r"""
+string s = L"Hello !" ;""",
+        ["string", "s", "=", f'L" Hello ▁ ! "', ";"],
     ),
 ]
 
@@ -334,6 +346,39 @@ string s =
         r"""string s = "First line" "Second line" ;
 """,
     )
+]
+
+TESTS_DETOKENIZE_SPECIAL_STRINGS = [
+    (
+        r'L"Hello world";',
+        r"""L"Hello world" ;
+""",
+    )
+]
+
+DETOKENIZE_WITH_DEFINE_TEST = [
+    (
+        r"""
+#define sf scanf
+#define pf printf
+int main ( ) {
+    int i;
+    sf ( "%d" , & i ) ;
+    pf ( "%d\n" , i ) ;
+}""",
+        r"""#define sf scanf
+#define pf printf
+int main ( ) {
+  int i ;
+  sf ( "%d" , & i ) ;
+  pf ( "%d\n" , i ) ;
+}
+""",
+    ),
+    (
+        r"""#define rep(p, q)  for(int i = p; i < q;i++)""",
+        """#define rep( p , q ) for(int i = p; i < q;i++)""",
+    ),
 ]
 
 DETOKENIZE_TESTS = []
@@ -528,6 +573,10 @@ def test_cpp_chars():
     tokenizer_test(TESTS_CHARS, processor, keep_comments=False)
 
 
+def test_detokenize_chars():
+    detokenize_non_invertible(TESTS_DETOKENIZE_CHARS, processor)
+
+
 def test_cpp_strings():
     tokenizer_test(
         TESTS_STRINGS + TESTS_MULTILINE_STRINGS, processor, keep_comments=False
@@ -546,6 +595,10 @@ def test_cpp_detokenize():
     detokenize_non_invertible(DETOKENIZE_TESTS, processor)
 
 
+def test_cpp_detokenize_defines():
+    detokenize_non_invertible(DETOKENIZE_WITH_DEFINE_TEST, processor)
+
+
 def test_detokenize_cpp_chars():
     detokenize_invertible(TESTS_CHARS, processor)
 
@@ -556,6 +609,10 @@ def test_detokenize_string():
 
 def test_detokenize_multiline_string():
     detokenize_non_invertible(TESTS_DETOKENIZE_MULTILINE_STRINGS, processor)
+
+
+def test_detokenize_special_string():
+    detokenize_non_invertible(TESTS_DETOKENIZE_SPECIAL_STRINGS, processor)
 
 
 def test_tokenize_twice_equal_tokenize_remove_comments():
@@ -576,13 +633,13 @@ TEST_FUNC_EXTRACTION = [
     public:
         double length;
         double breadth;
-        double height;   
+        double height;
 
-        double calculateArea(){   
+        double calculateArea(){
             return length * breadth;
         }
 
-        double calculateVolume(){   
+        double calculateVolume(){
             return length * breadth * height;
         }
 
@@ -600,7 +657,57 @@ void sampleFunction() {
                 "double calculateVolume ( ) { return length * breadth * height ; }",
             ],
         ],
-    )
+    ),
+    (
+        """#include<iostream>
+
+int main(){
+    return 0;
+}
+""",
+        (["int main ( ) { return 0 ; }"], []),
+    ),
+    (
+        """#include<cstdio>
+#include<cstring>
+#include<cstdlib>
+#include<algorithm>
+#include<set>
+using namespace std;
+
+#define mem(Arr,x) memset(Arr,x,sizeof(Arr))
+const int maxN=1010000*2;
+const int maxM=maxN<<1;
+const int Mod=1e9+7;
+int n;
+pair<int,int> P[maxN];
+set<pair<int,int> > S;
+int Nxt[maxN],St[maxN],vis[maxN];
+int edgecnt=-1,Head[maxN],Next[maxM],V[maxM];
+
+void Add_Edge(int u,int v);
+void dfs(int u,int w);
+int func0()
+{
+	return 0;
+}
+int func1(int u,int v)
+{
+	return 1; 
+}
+void func2()
+{
+	return
+}""",
+        (
+            [
+                "int func0 ( ) { return 0 ; }",
+                "int func1 ( int u , int v ) { return 1 ; }",
+                "void func2 ( ) { return }",
+            ],
+            [],
+        ),
+    ),
 ]
 
 

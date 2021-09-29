@@ -6,6 +6,7 @@
 #
 from codegen_sources.preprocessing.lang_processors.tree_sitter_processor import (
     TreeSitterLangProcessor,
+    NEW_LINE,
 )
 from codegen_sources.preprocessing.lang_processors.java_processor import (
     JAVA_TOKEN2CHAR,
@@ -80,7 +81,11 @@ class CppProcessor(TreeSitterLangProcessor):
 
         try:
             code = self.clean_hashtags_function(code)
-            code = code.replace("ENDCOM", "\n").replace("▁", "SPACETOKEN")
+            code = (
+                code.replace("ENDCOM", "\n")
+                .replace("▁", "SPACETOKEN")
+                .replace(NEW_LINE, "\n")
+            )
             tokens, token_types = self.get_tokens_and_types(code)
             tokens = list(zip(tokens, token_types))
         except KeyboardInterrupt:
@@ -106,7 +111,7 @@ class CppProcessor(TreeSitterLangProcessor):
                     )
                 ):
                     # go previous until the start of function
-                    while token not in {";", "}", "{"}:
+                    while token not in {";", "}", "{", NEW_LINE, "\n"}:
                         try:
                             i.prev()
                         except StopIteration:
@@ -196,3 +201,9 @@ class CppProcessor(TreeSitterLangProcessor):
                 break
 
         return functions_standalone, functions_class
+
+    def detokenize_code(self, code):
+        fix_func_defines_pattern = re.compile(r"#define (.*) \(")
+        detokenized = super().detokenize_code(code)
+        detokenized = fix_func_defines_pattern.sub(r"#define \1(", detokenized)
+        return detokenized
