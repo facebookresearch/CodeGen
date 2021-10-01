@@ -294,8 +294,8 @@ class ObfuscationTransformer(ast.NodeTransformer):
                     parent = node.value.id
                     if (
                         parent == "self"
-                        or parent.starswith("VAR_")
-                        or parent.starswith("CLASS_")
+                        or parent.startswith("VAR_")
+                        or parent.startswith("CLASS_")
                     ):
                         return alreadyMangledName
                 except AttributeError:
@@ -379,8 +379,8 @@ class ObfuscationTransformer(ast.NodeTransformer):
                 parent = sourceNode.value.id
                 if (
                     parent == "self"
-                    or parent.starswith("VAR_")
-                    or parent.starswith("CLASS_")
+                    or parent.startswith("VAR_")
+                    or parent.startswith("CLASS_")
                 ):
                     if self.names_generator.function_is_obfuscated(oldname):
                         # we consider that if it was already defined as function, it is a function. Otherwise, it is a variable
