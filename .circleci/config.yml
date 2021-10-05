@@ -7,16 +7,21 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/python:3.9.2
+      - image: circleci/python:3.6.9
     steps:
       - checkout
       - restore_cache:
           keys:
           - v0-dependencies-{{ checksum "ci_requirements.txt" }}
       - run:
+          name: install firejail and cmake
+          command: |
+            sudo apt-get --allow-releaseinfo-change update
+            sudo apt-get install firejail cmake
+      - run:
           name: run black codegen_sources
           command: |
-            pip install black==19.10b0
+            pip install black==19.10b0 --user
             black codegen_sources/. --diff
             black codegen_sources/. --check
       - run:
@@ -24,9 +29,9 @@ jobs:
           command: |
             python3 -m venv venv
             . venv/bin/activate
-            
-            pip install -r ci_requirements.txt           
-            
+
+            pip install -r ci_requirements.txt
+
             mkdir tree-sitter
             cd tree-sitter
             git clone https://github.com/tree-sitter/tree-sitter-cpp.git
@@ -34,7 +39,6 @@ jobs:
             git clone https://github.com/tree-sitter/tree-sitter-python.git
             cd ..
 
-            pip install cython
             cd codegen_sources/model/tools
             git clone https://github.com/glample/fastBPE.git
             cd fastBPE
@@ -42,12 +46,11 @@ jobs:
             python setup.py install
             cd ../../../../
             pip install fastBPE
-            
+
       - save_cache:
           paths:
             - ./venv
           key: v0-dependencies-{{ checksum "ci_requirements.txt" }}
-
 
       - run:
           name: Run tokenization tests

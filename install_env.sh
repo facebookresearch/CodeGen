@@ -1,4 +1,4 @@
-conda create --name codeGen_env
+conda create --name codeGen_env python=3.6.9
 conda activate codeGen_env
 conda config --add channels conda-forge
 conda config --add channels pytorch
