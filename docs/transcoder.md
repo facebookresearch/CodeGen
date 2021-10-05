@@ -11,9 +11,9 @@ Pytorch original implementation of TransCoder in [Unsupervised Translation of Pr
 We provide TransCoder models.
 We used the validation set to select the best checkpoint for each language pair, and choose the model to use to compute the test scores. 
 
-Models used in TransCoder original paper are the following (directions selected using the validation set):
- - [TransCoder_model_1](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_1.pth) for C++ -> Java, Java -> C++ and Java -> Python, Python -> C++
- - [TransCoder_model_2](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_2.pth) for C++ -> Python, Python -> Java
+Models used in TransCoder original paper are the following:
+ - [TransCoder_model_1](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_1.pth) for C++ -> Java, Java -> C++ and Java -> Python
+ - [TransCoder_model_2](https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_2.pth) for C++ -> Python, Python -> C++ and Python -> Java
 
 Note: if you really want the output of these models to be exactly right, you need to change the constant [LAYER_NORM_EPSILON](../codegen_sources/model/src/model/transformer.py#L17) to be `1e-12` instead of `1e-5`. If you don't, the result will be the same in more than 99% of the cases and only slightly different otherwise.
 
@@ -188,82 +188,6 @@ Evaluation is done after each training epoch. But, if you want to evaluate a mod
 
 You do not need to have the training data in your ```data_path```, only the validation and test sets.
 
-## Results
-Our CA@1 results with the models we provide for beam size 1 (i.e. greedy decoding) and 10 (using length_penalty = 0.5 for beam size 10).
-The CA@N metrics may vary slightly due to timeouts. Our results for TransCoder are sligthly different from those of the original paper due to code and libraries updates.
-The model trained from DOBF was selected based on the validation score for Java -> Python.
-
-<table>
-   <tr>
-      <td>Model/Task</td>
-      <td colspan=2>C++ -> Java</td>
-      <td colspan=2>C++ -> Python</td>
-      <td colspan=2>Java -> C++</td>
-      <td colspan=2>Java -> Python</td>
-      <td colspan=2>Python -> C++</td>
-      <td colspan=2>Python -> Java</td>
-   </tr>
-   <tr>
-      <td>Beam Size</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-      <td>k=1 </td>
-      <td>k=10</td>
-   </tr>
-   <tr>
-      <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_1.pth" target="_blank">TransCoder_model_1</a></td>
-      <td>62.99</td>
-      <td>64.86</td>
-      <td>44.71</td>
-      <td>47.08</td>
-      <td>80.04</td>
-      <td>78.76</td>
-      <td>46.87</td>
-      <td>48.81</td>
-      <td>31.55</td>
-      <td>33.69</td>
-      <td>33.89</td>
-      <td>35.55</td>
-   </tr>
-   <tr>
-      <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_2.pth" target="_blank">TransCoder_model_2</a></td>
-      <td>62.37</td>
-      <td>62.99</td>
-      <td>42.33</td>
-      <td>43.41</td>
-      <td>77.68</td>
-      <td>78.54</td>
-      <td>46.87</td>
-      <td>47.73</td>
-      <td>29.61</td>
-      <td>32.4</td>
-      <td>32.64</td>
-      <td>35.97</td>
-   </tr>
-   <tr>
-      <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/translator_transcoder_size_from_DOBF.pth" target="_blank">TransCoder from DOBF</a></td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>49.24</td>
-      <td>52.7</td>
-      <td>-</td>
-      <td>-</td>
-      <td>39.5</td>
-      <td>45.32</td>
-   </tr>
-</table>
 
 ### Train in multi GPU
 To train a model in multi GPU replace `python train.py` with:
