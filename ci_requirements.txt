@@ -14,3 +14,5 @@ javalang
 psutil
 pytest==6.2.2
 tree_sitter
+cython
+black==19.10b0
