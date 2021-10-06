@@ -6,6 +6,10 @@ We provide reference implementations of the following papers:
 
 We also provide pre-trained models for language modeling, translation and deobfuscation.
 
+You can find some documentation for each projects in the docs folder:
+- [TransCoder](docs/transcoder.md).
+- [DOBF](docs/dobf.md)
+
 
 ## Dependencies
 Run [install_env.sh](install_env.sh).
