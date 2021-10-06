@@ -84,7 +84,7 @@ Simpy download the binarized data [transcoder_test_set.zip](https://dl.fbaipubli
 ### Train
 Train a MLM Model:
 ```
-python train.py 
+python codegen_sources/model/train.py 
 
 ## main parameters
 --exp_name mlm \
@@ -126,7 +126,7 @@ python train.py
 To train transcoder from a pretrained model (MLM or DOBF - for DOBF [see]):
  
 ``` 
-python train.py   
+python codegen_sources/model/train.py   
 
 ## main parameters
 --exp_name transcoder \
@@ -182,18 +182,52 @@ python train.py
 Evaluation is done after each training epoch. But, if you want to evaluate a model without training it, run the same command as the training command and add these flags:
 
 ```bash
---eval_only True
---reload_model '<TRANSCODER_MODEL_PATH>,<TRANSCODER_MODEL_PATH>'
+--reload_model '<TRANSCODER_MODEL_PATH>,<TRANSCODER_MODEL_PATH>' \
+--eval_only True \
+--reload_encoder_for_decoder false
+```
+
+For instance:
+```bash
+python codegen_sources/model/train.py \
+--exp_name transcoder_eval \
+--dump_path '<DUMP_PATH>' \
+--data_path '<DATASET_PATH>' \
+--bt_steps 'python_sa-java_sa-python_sa,java_sa-python_sa-java_sa,python_sa-cpp_sa-python_sa,java_sa-cpp_sa-java_sa,cpp_sa-python_sa-cpp_sa,cpp_sa-java_sa-cpp_sa'    \
+--encoder_only False \
+--n_layers 0  \
+--n_layers_encoder 6  \
+--n_layers_decoder 6 \
+--emb_dim 1024  \
+--n_heads 8  \
+--lgs 'cpp_sa-java_sa-python_sa'  \
+--max_vocab 64000 \
+--gelu_activation false \
+--roberta_mode false  \
+--amp 2  \
+--fp16 true  \
+--tokens_per_batch 3000  \
+--max_batch_size 128 \
+--eval_bleu true \
+--eval_computation true \
+--has_sentences_ids true \
+--generate_hypothesis true \
+--save_periodic 1 \
+--reload_model "/checkpoint/broz/Transcoder_saved_models/TransCoder_model_1.pth,/checkpoint/broz/Transcoder_saved_models/TransCoder_model_1.pth" \
+--reload_encoder_for_decoder false \
+--eval_only true \
+--n_sentences_eval 1500
+
 ```
 
 You do not need to have the training data in your ```data_path```, only the validation and test sets.
 
 
 ### Train in multi GPU
-To train a model in multi GPU replace `python train.py` with:
+To train a model in multi GPU replace `python codegen_sources/model/train.py` with:
 
 ```
-export NGPU=2; python -m torch.distributed.launch --nproc_per_node=$NGPU train.py
+export NGPU=2; python -m torch.distributed.launch --nproc_per_node=$NGPU codegen_sources/model/train.py
 ```
 
 ## References

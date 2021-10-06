@@ -562,6 +562,10 @@ def check_data_params(params):
     assert not (
         params.eval_computation and not params.has_sentences_ids
     ), "Sentence IDs are necessary to compute the computational accuracy."
+    assert (
+        len(params.mono_dataset) > 0 or len(params.para_dataset) > 0
+    ), "No dataset to be loaded, you probably forget to set a training step."
+
     # assert all([all([os.path.isfile(p1) and os.path.isfile(p2) for p1, p2 in paths.values()]) for paths in params.para_dataset.values()])
 
     # check that we can evaluate on BLEU
