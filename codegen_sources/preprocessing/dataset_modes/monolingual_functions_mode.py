@@ -7,18 +7,16 @@
 
 import sys
 
-from codegen_sources.preprocessing.dataset_modes.dataset_mode import DatasetMode
-from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import REPLACE_DICT
-from codegen_sources.preprocessing.timeout import timeout
-from codegen_sources.preprocessing.utils import (
-    get_subset_file,
-    is_valid_file,
-)
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
-import submitit
-from submitit import Executor, LocalExecutor
 from logging import getLogger
 from pathlib import Path
+
+import submitit
+from codegen_sources.preprocessing.dataset_modes.dataset_mode import DatasetMode
+from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import REPLACE_DICT
+from codegen_sources.preprocessing.timeout import timeout
+from codegen_sources.preprocessing.utils import get_subset_file, is_valid_file
+from submitit import Executor, LocalExecutor
 
 # functions stand alone and functions of class
 MONOLINGUAL_FUNC_SUFFIXES = ["sa", "cl"]
@@ -39,6 +37,7 @@ class MonolingualFunctionsMode(DatasetMode):
         bpe,
         processed_lines: set = None,
         nb_train_split: int = 8,
+        keep_comments: bool = False,
     ):
         super().__init__(
             suffixes=MONOLINGUAL_FUNC_SUFFIXES,
@@ -48,6 +47,7 @@ class MonolingualFunctionsMode(DatasetMode):
             parallel_dataset=False,
             processed_lines=processed_lines,
             nb_train_split=nb_train_split,
+            keep_comments=keep_comments,
         )
 
     def checkpoint(
@@ -78,7 +78,11 @@ class MonolingualFunctionsMode(DatasetMode):
 
         try:
             tokenized_file = " ".join(
-                lang_processor.tokenize_code(content, process_strings=process_strings)
+                lang_processor.tokenize_code(
+                    content,
+                    process_strings=process_strings,
+                    keep_comments=self.keep_comments,
+                )
             )
             f_standalone, f_class = lang_processor.extract_functions(tokenized_file)
         except KeyboardInterrupt:
@@ -92,7 +96,7 @@ class MonolingualFunctionsMode(DatasetMode):
             {"sa": f_standalone, "cl": f_class},
         )
 
-    def _learn_bpe(self, ncodes: int, executor: Executor):
+    def _learn_bpe(self, ncodes: int, executor: Executor = None):
         # get data to training data for bpe
         all_shufs = [
             self.folder.joinpath(f"{lang}.all.{suffix}.tok.shuf")
@@ -120,7 +124,7 @@ class MonolingualFunctionsMode(DatasetMode):
         assert is_valid_file(self.bpe.codes)
         logger.info(f"Successfully learnt bpe. Bpe codes stored in {self.bpe.codes}.")
 
-    def _get_vocab(self, executor: Executor):
+    def _get_vocab(self, executor: Executor = None):
         # get data to learn vocab
         data_get_vocab = [
             self.folder.joinpath(f"{lang}.train.{suffix}.0.bpe")

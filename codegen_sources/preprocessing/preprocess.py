@@ -59,7 +59,10 @@ def preprocess(args):
     if args.local is False:
         cluster_tokenization = AutoExecutor(Path(args.input_path).joinpath("log"))
         cluster_tokenization.update_parameters(
-            cpus_per_task=40, mem_gb=args.job_mem, slurm_partition="learnlab",
+            cpus_per_task=40,
+            mem_gb=args.job_mem,
+            slurm_partition="learnlab",
+            array_parallelism=200,
         )
         cluster_train_bpe = AutoExecutor(Path(args.input_path).joinpath("log"))
         cluster_train_bpe.update_parameters(
@@ -67,7 +70,10 @@ def preprocess(args):
         )
         cluster_apply_bpe = AutoExecutor(Path(args.input_path).joinpath("log"))
         cluster_apply_bpe.update_parameters(
-            cpus_per_task=1, mem_gb=args.job_mem, slurm_partition="learnlab",
+            cpus_per_task=1,
+            mem_gb=args.job_mem,
+            slurm_partition="learnlab",
+            array_parallelism=200,
         )
     else:
         cluster_tokenization = LocalExecutor(Path(args.input_path).joinpath("log"))
@@ -82,8 +88,11 @@ def preprocess(args):
         languages=args.langs,
         bpe=BPE_mode,
         nb_train_split=args.train_splits,
+        keep_comments=args.keep_comments,
     )
-    dataset.extract_data_and_tokenize(executor=cluster_tokenization,)
+    dataset.extract_data_and_tokenize(
+        executor=cluster_tokenization, local_parallelism=args.local_parallelism
+    )
 
     dataset.get_train_test_valid_splits(
         percent_test=args.percent_test_valid,
@@ -92,9 +101,13 @@ def preprocess(args):
     )
     dataset.learn_bpe(ncodes=args.ncodes, executor=cluster_train_bpe)
 
-    dataset.apply_bpe(executor=cluster_apply_bpe)
+    dataset.apply_bpe(
+        executor=cluster_apply_bpe, local_parallelism=args.local_parallelism
+    )
     dataset.get_vocab(executor=cluster_train_bpe)
-    dataset.binarize(executor=cluster_apply_bpe)
+    dataset.binarize(
+        executor=cluster_apply_bpe, local_parallelism=args.local_parallelism
+    )
     dataset.check_files_and_symlink_for_XLM()
 
 
@@ -106,6 +119,12 @@ if __name__ == "__main__":
         type=bool_flag,
         default=True,
         help="True if you want to run the processing pipeline locally, false if want to use submitit.",
+    )
+    parser.add_argument(
+        "--local_parallelism",
+        type=int,
+        default=None,
+        help="When running locally, number of files read at the same time.",
     )
     parser.add_argument(
         "--langs",
@@ -141,7 +160,7 @@ if __name__ == "__main__":
         help="Timeout for tokenization/obfuscation jobs",
     )
     parser.add_argument(
-        "--bpe_timeout", type=int, default=60, help="Timeout for bpe jobs"
+        "--bpe_timeout", type=int, default=240, help="Timeout for bpe jobs"
     )
     parser.add_argument(
         "--train_bpe_timeout", type=int, default=500, help="Timeout for bpe jobs"
@@ -164,6 +183,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Path to existing fastbpe vocab",
+    )
+    parser.add_argument(
+        "--keep_comments",
+        type=bool_flag,
+        default=False,
+        help="Whether to keep the comments (does not happen with deobfuscation dataset).",
     )
     parser.add_argument(
         "--fastbpe_code_path",
