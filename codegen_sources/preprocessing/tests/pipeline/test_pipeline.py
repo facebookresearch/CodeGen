@@ -33,6 +33,7 @@ def test_obfuscation_roberta_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "roberta",
+            "keep_comments": False,
             "tokenization_timeout": 2,
             "bpe_timeout": 2,
             "train_bpe_timeout": 5,
@@ -54,6 +55,7 @@ def test_obfuscation_functions_roberta_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "roberta",
+            "keep_comments": False,
             "tokenization_timeout": 2,
             "bpe_timeout": 2,
             "train_bpe_timeout": 5,
@@ -75,6 +77,7 @@ def test_monolingual_roberta_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "roberta",
+            "keep_comments": False,
             "tokenization_timeout": 2,
             "bpe_timeout": 2,
             "train_bpe_timeout": 5,
@@ -96,6 +99,7 @@ def test_monolingual_functions_roberta_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "roberta",
+            "keep_comments": False,
             "tokenization_timeout": 2,
             "bpe_timeout": 2,
             "train_bpe_timeout": 5,
@@ -118,6 +122,7 @@ def test_monolingual_fast_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "fast",
+            "keep_comments": False,
             "fastbpe_code_path": None,
             "fastbpe_vocab_path": None,
             "fastbpe_use_vocab": False,
@@ -142,6 +147,32 @@ def test_monolingual_functions_fast_pipeline():
             "ncodes": 100,
             "percent_test_valid": 10,
             "bpe_mode": "fast",
+            "keep_comments": False,
+            "fastbpe_code_path": None,
+            "fastbpe_vocab_path": None,
+            "fastbpe_use_vocab": False,
+            "tokenization_timeout": 2,
+            "bpe_timeout": 2,
+            "train_bpe_timeout": 5,
+        }
+    )
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_monolingual_functions_fast_pipeline_keep_comments():
+    args = AttrDict()
+    args.update(
+        {
+            "input_path": str(input_path),
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual_functions",
+            "local": "True",
+            "train_splits": 1,
+            "ncodes": 100,
+            "percent_test_valid": 10,
+            "bpe_mode": "fast",
+            "keep_comments": True,
             "fastbpe_code_path": None,
             "fastbpe_vocab_path": None,
             "fastbpe_use_vocab": False,
@@ -165,6 +196,7 @@ def test_obfuscation_fast_pipeline():
             "train_splits": 1,
             "percent_test_valid": 10,
             "bpe_mode": "fast",
+            "keep_comments": False,
             "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
             "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
             "fastbpe_use_vocab": False,
@@ -189,6 +221,7 @@ def test_obfuscation_functions_fast_pipeline():
             "train_splits": 1,
             "percent_test_valid": 10,
             "bpe_mode": "fast",
+            "keep_comments": False,
             "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
             "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
             "fastbpe_use_vocab": False,
