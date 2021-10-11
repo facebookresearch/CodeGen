@@ -7,31 +7,23 @@
 
 import fileinput
 import json
+from concurrent.futures.process import ProcessPoolExecutor
 from multiprocessing import Pool, cpu_count
 import submitit
 from typing import TypeVar, Generic, List
+import time
 from pathlib import Path
 import subprocess
 import zlib
-from itertools import chain, repeat
 from hashlib import sha256
-from submitit import Executor, LocalExecutor
+from itertools import chain, repeat
+
 from logging import getLogger
 
 import sys
 
-from codegen_sources.preprocessing import timeout
-
-from codegen_sources.preprocessing.utils import (
-    binarize_for_XLM_file,
-    shuf_parallel_files,
-    create_symlink,
-    shuf_file,
-    get_all_pairs,
-    is_valid_file,
-    check_same_number_of_lines,
-)
 import tqdm
+from codegen_sources.preprocessing import timeout
 from codegen_sources.preprocessing.bpe_modes.bpe_mode import BPEMode
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import SEPARATOR
 from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
@@ -40,7 +32,21 @@ from codegen_sources.preprocessing.lang_processors.python_processor import (
     PythonProcessor,
 )
 from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
-import time
+from codegen_sources.preprocessing.lang_processors.python_processor import (
+    PythonProcessor,
+)
+from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import SEPARATOR
+from codegen_sources.preprocessing.utils import (
+    binarize_for_XLM_file,
+    check_same_number_of_lines,
+    create_symlink,
+    get_all_pairs,
+    is_valid_file,
+    shuf_file,
+    shuf_parallel_files,
+)
+from submitit import Executor, LocalExecutor
+
 
 TIMEOUT = "timeout"
 
@@ -65,6 +71,7 @@ class DatasetMode(Generic[T]):
         processed_lines: set = None,
         suffixes_for_postprocessing=(),
         nb_train_split=8,
+        keep_comments: bool = False,
     ):
         self.suffixes = suffixes
         self.suffixes_for_postprocessing = suffixes_for_postprocessing
@@ -74,6 +81,7 @@ class DatasetMode(Generic[T]):
         else:
             self.processed_lines = processed_lines
         self.parallel_dataset = parallel_dataset
+        self.keep_comments = keep_comments
 
         self.folder = Path(folder)
         self.languages = languages
@@ -81,6 +89,7 @@ class DatasetMode(Generic[T]):
         self.initialize_processor()
         self.bpe = bpe
         self.nb_train_split = nb_train_split
+        self.id_is_line = False
 
     def initialize_processor(self):
         global lang_processors
@@ -109,7 +118,7 @@ class DatasetMode(Generic[T]):
         )
 
     def extract_data_and_tokenize(
-        self, executor: Executor = None,
+        self, executor: Executor = None, local_parallelism: int = None
     ):
         """
         Takes the root folder of the dataset, containing json files as input
@@ -119,7 +128,11 @@ class DatasetMode(Generic[T]):
         logger.info("")
         logger.info("========== Extract and Tokenize ===========")
         if executor is None:
-            executor = LocalExecutor(folder=self.folder.joinpath("log"))
+            if local_parallelism is None:
+                executor = LocalExecutor(folder=self.folder.joinpath("log"))
+            else:
+                executor = ProcessPoolExecutor(max_workers=local_parallelism)
+
         jobs = []
 
         assert any(
@@ -144,12 +157,16 @@ class DatasetMode(Generic[T]):
             f"{' '.join(self.languages)}: tokenizing and extracting parallel functions in {len(json_files)} json files ..."
         )
         if len(json_files) > 0:
-            jobs += executor.map_array(
-                self.extract_from_json_and_tokenize,
-                files,
-                file_langs,
-                repeat(self.bpe.process_strings),
-            )
+            if hasattr(executor, "map_array"):
+                jobs += executor.map_array(
+                    self.extract_from_json_and_tokenize,
+                    files,
+                    file_langs,
+                    repeat(self.bpe.process_strings),
+                )
+            else:
+                for f, flang in zip(files, file_langs):
+                    jobs.append(executor.submit(self.extract_from_json_and_tokenize, f, flang, self.bpe.process_strings))
         else:
             return logger.info("Data extraction and tokenization already done.")
 
@@ -356,7 +373,7 @@ class DatasetMode(Generic[T]):
                 )
                 # TODO check number of lines
                 assert proc.returncode == 0, proc.stderr
-                assert is_valid_file(all_tok_path)
+                assert is_valid_file(all_tok_path), all_tok_path
 
     def shuffle_all_tok(self):
         """
@@ -375,7 +392,8 @@ class DatasetMode(Generic[T]):
             if all(
                 [is_valid_file(self.folder.joinpath(f"{p}.shuf")) for p in filenames]
             ):
-                return
+                logger.info(f"shuffle already done for {lang}")
+                continue
             # shuffle
             if not self.parallel_dataset:
                 logger.info(
@@ -434,7 +452,8 @@ class DatasetMode(Generic[T]):
                     )
                 }
                 if all([is_valid_file(path) for path in output_paths.values()]):
-                    return
+                    logger.info(f"shuffle already done for {lang} and suffix {suffix}")
+                    continue
                 output_nlines = {k: 0 for k in output_paths.keys()}
                 outputs = {
                     split: open(p, "w", encoding="utf-8", errors="ignore")
@@ -445,8 +464,12 @@ class DatasetMode(Generic[T]):
                 ) as all_splits_file:
                     # Deduplication
                     for line_id, line in enumerate(all_splits_file):
+                        if self.id_is_line:
+                            line = f"{line_id}/{line_id } | {line}"
+
                         if "|" not in line or "/" not in line.split("|", 1)[0]:
                             continue
+
                         repo, content = line.split("|", 1)
                         if suffix in suffix_to_dedup:
                             content_hash = sha256(content.encode("utf-8")).hexdigest()
@@ -542,9 +565,8 @@ class DatasetMode(Generic[T]):
         jobs = []
         for f in chain(
             *[
-                self.folder.glob(f"{lang}.{split}.{suffix}.*tok")
+                self.folder.glob(f"{lang}.{split}.*.*tok")
                 for split in DATASET_SPLITS
-                for suffix in self.suffixes
                 for lang in self.languages
             ]
         ):
@@ -582,18 +604,20 @@ class DatasetMode(Generic[T]):
     def _get_vocab(self, executor: Executor = None):
         raise NotImplementedError("Get vocab method needs to be implemented.")
 
-    def binarize(self, executor: Executor = None):
+    def binarize(self, executor: Executor = None, local_parallelism: int = None):
         logger.info("")
         logger.info("")
         logger.info("========== Binarize ===========")
         if executor is None:
-            executor = LocalExecutor(folder=self.folder.joinpath("log"))
+            if local_parallelism is None:
+                executor = LocalExecutor(folder=self.folder.joinpath("log"))
+            else:
+                executor = ProcessPoolExecutor(max_workers=local_parallelism)
         jobs = []
         for f in chain(
             *[
-                self.folder.glob(f"{lang}.{split}.{suffix}*{self.bpe.ext}")
+                self.folder.glob(f"{lang}.{split}.*{self.bpe.ext}")
                 for split in DATASET_SPLITS
-                for suffix in self.suffixes
                 for lang in self.languages
             ]
         ):
@@ -649,9 +673,7 @@ class DatasetMode(Generic[T]):
                                             ),
                                         )
                                     create_symlink(
-                                        self.folder.joinpath(
-                                            f"{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth"
-                                        ),
+                                        f"../{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth",
                                         XLM_folder.joinpath(
                                             f"{split}.{lang}_{suffix1}-{lang}_{suffix2}.{lang}_{suffix}.{i}.pth"
                                         ),
@@ -667,9 +689,7 @@ class DatasetMode(Generic[T]):
                                         ),
                                     )
                                 create_symlink(
-                                    self.folder.joinpath(
-                                        f"{lang}.{split}.{suffix}{self.bpe.ext}.pth"
-                                    ),
+                                    f"../{lang}.{split}.{suffix}{self.bpe.ext}.pth",
                                     XLM_folder.joinpath(
                                         f"{split}.{lang}_{suffix1}-{lang}_{suffix2}.{lang}_{suffix}.pth"
                                     ),
@@ -679,18 +699,14 @@ class DatasetMode(Generic[T]):
                         if split == "train":
                             for i in range(self.nb_train_split):
                                 create_symlink(
-                                    self.folder.joinpath(
-                                        f"{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth"
-                                    ),
+                                    f"../{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth",
                                     XLM_folder.joinpath(
                                         f"{split}.{lang}_{suffix}.{i}.pth"
                                     ),
                                 )
                         else:
                             create_symlink(
-                                self.folder.joinpath(
-                                    f"{lang}.{split}.{suffix}{self.bpe.ext}.pth"
-                                ),
+                                f"../{lang}.{split}.{suffix}{self.bpe.ext}.pth",
                                 XLM_folder.joinpath(f"{split}.{lang}_{suffix}.pth"),
                             )
         logger.info("Check and symlink done.")

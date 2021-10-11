@@ -6,20 +6,16 @@
 #
 
 import sys
+from logging import getLogger
+from pathlib import Path
 
+import submitit
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import DatasetMode
 from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import REPLACE_DICT
 from codegen_sources.preprocessing.timeout import timeout
-from codegen_sources.preprocessing.utils import (
-    get_subset_file,
-    is_valid_file,
-)
-import submitit
+from codegen_sources.preprocessing.utils import get_subset_file, is_valid_file
 from submitit import Executor, LocalExecutor
-from logging import getLogger
-from pathlib import Path
-
 
 MONOLINGUAL_SUFFIXES = ["monolingual"]
 logger = getLogger()
@@ -37,6 +33,7 @@ class MonolingualMode(DatasetMode):
         bpe,
         processed_lines: set = None,
         nb_train_split: int = 8,
+        keep_comments: bool = False,
     ):
         super().__init__(
             suffixes=MONOLINGUAL_SUFFIXES,
@@ -46,6 +43,7 @@ class MonolingualMode(DatasetMode):
             parallel_dataset=False,
             processed_lines=processed_lines,
             nb_train_split=nb_train_split,
+            keep_comments=keep_comments,
         )
 
     def checkpoint(
@@ -81,7 +79,13 @@ class MonolingualMode(DatasetMode):
                 json_line["repo_name"],
                 {
                     "monolingual": [
-                        " ".join(tokenize(content, process_strings=process_strings))
+                        " ".join(
+                            tokenize(
+                                content,
+                                process_strings=process_strings,
+                                keep_comments=self.keep_comments,
+                            )
+                        )
                     ]
                 },
             )
@@ -91,7 +95,7 @@ class MonolingualMode(DatasetMode):
             sys.stderr.write(f"Error tokenizing content {e}")
             return default_return
 
-    def _learn_bpe(self, ncodes: int, executor: Executor):
+    def _learn_bpe(self, ncodes: int, executor: Executor = None):
         # get data to training data for bpe
         assert (
             len(self.suffixes) == 1
@@ -121,7 +125,7 @@ class MonolingualMode(DatasetMode):
         assert is_valid_file(self.bpe.codes)
         logger.info(f"Successfully learnt bpe. Bpe codes stored in {self.bpe.codes}.")
 
-    def _get_vocab(self, executor: Executor):
+    def _get_vocab(self, executor: Executor = None):
         # get data to learn vocab
         data_get_vocab = [
             self.folder.joinpath(f"{lang}.train.{self.suffixes[0]}.0.bpe")
