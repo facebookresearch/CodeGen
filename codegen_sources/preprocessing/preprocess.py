@@ -90,7 +90,9 @@ def preprocess(args):
         nb_train_split=args.train_splits,
         keep_comments=args.keep_comments,
     )
-    dataset.extract_data_and_tokenize(executor=cluster_tokenization, local_parallelism=args.local_parallelism)
+    dataset.extract_data_and_tokenize(
+        executor=cluster_tokenization, local_parallelism=args.local_parallelism
+    )
 
     dataset.get_train_test_valid_splits(
         percent_test=args.percent_test_valid,
@@ -99,9 +101,13 @@ def preprocess(args):
     )
     dataset.learn_bpe(ncodes=args.ncodes, executor=cluster_train_bpe)
 
-    dataset.apply_bpe(executor=cluster_apply_bpe, local_parallelism=args.local_parallelism)
+    dataset.apply_bpe(
+        executor=cluster_apply_bpe, local_parallelism=args.local_parallelism
+    )
     dataset.get_vocab(executor=cluster_train_bpe)
-    dataset.binarize(executor=cluster_apply_bpe, local_parallelism=args.local_parallelism)
+    dataset.binarize(
+        executor=cluster_apply_bpe, local_parallelism=args.local_parallelism
+    )
     dataset.check_files_and_symlink_for_XLM()
 
 

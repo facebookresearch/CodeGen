@@ -166,7 +166,14 @@ class DatasetMode(Generic[T]):
                 )
             else:
                 for f, flang in zip(files, file_langs):
-                    jobs.append(executor.submit(self.extract_from_json_and_tokenize, f, flang, self.bpe.process_strings))
+                    jobs.append(
+                        executor.submit(
+                            self.extract_from_json_and_tokenize,
+                            f,
+                            flang,
+                            self.bpe.process_strings,
+                        )
+                    )
         else:
             return logger.info("Data extraction and tokenization already done.")
 
