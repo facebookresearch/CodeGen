@@ -176,7 +176,9 @@ def create_symlink(file_path, symlink):
         file_path = Path(file_path)
     if isinstance(symlink, str):
         symlink = Path(symlink)
-    assert file_path.is_file(), f"{file_path} is not a file"
+    assert (
+        symlink.parent.joinpath(file_path).resolve().is_file()
+    ), f"{file_path} is not a file: resolved into {symlink.parent.joinpath(file_path).resolve()}"
     assert not symlink.is_file(), f"{symlink} already exists"
     process = subprocess.run(
         f"ln -s {file_path} {symlink}",
