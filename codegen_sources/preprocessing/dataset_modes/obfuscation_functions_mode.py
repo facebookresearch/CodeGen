@@ -143,7 +143,7 @@ class ObfuscationFunctionsMode(DatasetMode):
             "To do so, please run pipepline with monolingual mode until BPE learning."
         )
 
-    def apply_bpe(self, executor: Executor = None):
+    def apply_bpe(self, executor: Executor = None, local_parallelism: int = None):
         """
         Overwrite the method as in the obfuscation mode, need to restore the BPE.
         """
