@@ -563,7 +563,7 @@ class DatasetMode(Generic[T]):
     def _learn_bpe(self, ncodes: int, executor: Executor = None):
         raise NotImplementedError("Learn bpe method need to be implemented.")
 
-    def apply_bpe(self, executor: Executor = None):
+    def apply_bpe(self, executor: Executor = None, local_parallelism: int = None):
         logger.info("")
         logger.info("")
         logger.info("========== Apply BPE ===========")
