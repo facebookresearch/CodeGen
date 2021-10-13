@@ -162,7 +162,7 @@ class DatasetMode(Generic[T]):
                     self.extract_from_json_and_tokenize,
                     files,
                     file_langs,
-                    repeat(self.bpe.process_strings)
+                    repeat(self.bpe.process_strings),
                 )
             else:
                 for f, flang in zip(files, file_langs):
