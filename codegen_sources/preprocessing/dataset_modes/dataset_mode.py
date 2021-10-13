@@ -162,7 +162,7 @@ class DatasetMode(Generic[T]):
                     self.extract_from_json_and_tokenize,
                     files,
                     file_langs,
-                    repeat(self.bpe.process_strings),
+                    repeat(self.bpe.process_strings)
                 )
             else:
                 for f, flang in zip(files, file_langs):
@@ -172,6 +172,7 @@ class DatasetMode(Generic[T]):
                             f,
                             flang,
                             self.bpe.process_strings,
+                            local_parallelism,
                         )
                     )
         else:
@@ -181,7 +182,8 @@ class DatasetMode(Generic[T]):
             job.result()
 
     def extract_from_json_and_tokenize(
-        self, input_path: str, lang: str, process_strings: bool
+        self, input_path: str, lang: str, process_strings: bool,
+        local_parallelism: int = None
     ):
         """
         Takes one json file as input. For each document, it extracts data and tokenizes it.
@@ -212,9 +214,18 @@ class DatasetMode(Generic[T]):
         filtered_examples = 0
         try:
             start = time.time()
-            executor = Pool(
-                processes=cpu_count(), initializer=self.initialize_processor
-            )
+            if local_parallelism:
+                assert cpu_count() > (local_parallelism -
+                      1), "Number of processors must be greater than number of max workers in ProcessPoolExecutor"
+                # Leave one processor free for other tasks.
+                executor = Pool(
+                    processes=cpu_count() - local_parallelism - 1,
+                    initializer=self.initialize_processor
+                )
+            else:
+                executor = Pool(
+                    processes=cpu_count(), initializer=self.initialize_processor
+                )
             results_for_line = tqdm.tqdm(
                 executor.map(self.checkpoint_line, lines), total=len(lines)
             )
