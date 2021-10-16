@@ -127,12 +127,9 @@ class DatasetMode(Generic[T]):
         logger.info("")
         logger.info("")
         logger.info("========== Extract and Tokenize ===========")
-        if executor is None:
-            if local_parallelism is None:
-                executor = LocalExecutor(folder=self.folder.joinpath("log"))
-            else:
-                executor = ProcessPoolExecutor(max_workers=local_parallelism)
-
+        if local_parallelism is not None:
+            logger.info(f"Using {local_parallelism} processors.")
+            executor = ProcessPoolExecutor(max_workers=local_parallelism)
         jobs = []
 
         assert any(
