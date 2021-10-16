@@ -179,8 +179,11 @@ class DatasetMode(Generic[T]):
             job.result()
 
     def extract_from_json_and_tokenize(
-        self, input_path: str, lang: str, process_strings: bool,
-        local_parallelism: int = None
+        self,
+        input_path: str,
+        lang: str,
+        process_strings: bool,
+        local_parallelism: int = None,
     ):
         """
         Takes one json file as input. For each document, it extracts data and tokenizes it.
@@ -212,12 +215,13 @@ class DatasetMode(Generic[T]):
         try:
             start = time.time()
             if local_parallelism:
-                assert cpu_count() > (local_parallelism -
-                      1), "Number of processors must be greater than number of max workers in ProcessPoolExecutor"
+                assert cpu_count() > (
+                    local_parallelism - 1
+                ), "Number of processors must be greater than number of max workers in ProcessPoolExecutor"
                 # Leave one processor free for other tasks.
                 executor = Pool(
                     processes=cpu_count() - local_parallelism - 1,
-                    initializer=self.initialize_processor
+                    initializer=self.initialize_processor,
                 )
             else:
                 executor = Pool(
