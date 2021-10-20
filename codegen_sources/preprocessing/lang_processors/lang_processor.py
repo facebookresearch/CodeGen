@@ -10,6 +10,9 @@ from abc import ABC
 class LangProcessor(ABC):
     processors = {}
 
+    def __init__(self, language):
+        self.language = language
+
     @classmethod
     def __init_subclass__(cls):
         super().__init_subclass__()
@@ -31,7 +34,7 @@ class LangProcessor(ABC):
     def extract_functions(self, code):
         raise NotImplementedError
 
-    def extract_function_name(self, function):
+    def get_function_name(self, function):
         raise NotImplementedError
 
     def extract_arguments(self, function):

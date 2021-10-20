@@ -14,7 +14,6 @@ import os
 import argparse
 from pathlib import Path
 import sys
-import fastBPE
 import torch
 from codegen_sources.model.src.logger import create_logger
 from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
@@ -35,7 +34,7 @@ from codegen_sources.model.src.data.dictionary import (
 )
 from codegen_sources.model.src.utils import restore_roberta_segmentation_sentence
 from codegen_sources.model.src.model import build_model
-from codegen_sources.model.src.utils import AttrDict
+from codegen_sources.model.src.utils import AttrDict, TREE_SITTER_ROOT
 
 SUPPORTED_LANGUAGES = ["cpp", "java", "python"]
 
@@ -76,6 +75,9 @@ def get_parser():
         type=int,
         default=1,
         help="Beam size. The beams will be printed in order of decreasing likelihood.",
+    )
+    parser.add_argument(
+        "--input", type=str, default=None, help="input path",
     )
 
     return parser
@@ -131,17 +133,20 @@ class Translator:
         beam_size=1,
         sample_temperature=None,
         device="cuda:0",
+        detokenize=True,
+        max_tokens=None,
+        length_penalty=0.5,
     ):
 
         # Build language processors
         assert lang1 in {"python", "java", "cpp"}, lang1
         assert lang2 in {"python", "java", "cpp"}, lang2
         src_lang_processor = LangProcessor.processors[lang1](
-            root_folder=Path(__file__).parents[2].joinpath("tree-sitter")
+            root_folder=TREE_SITTER_ROOT
         )
         tokenizer = src_lang_processor.tokenize_code
         tgt_lang_processor = LangProcessor.processors[lang2](
-            root_folder=Path(__file__).parents[2].joinpath("tree-sitter")
+            root_folder=TREE_SITTER_ROOT
         )
         detokenizer = tgt_lang_processor.detokenize_code
 
@@ -167,6 +172,13 @@ class Translator:
             tokens = self.bpe_model.apply_bpe(" ".join(tokens)).split()
             tokens = ["</s>"] + tokens + ["</s>"]
             input = " ".join(tokens)
+            if max_tokens is not None and len(input.split()) > max_tokens:
+                logger.info(
+                    f"Ignoring long input sentence of size {len(input.split())}"
+                )
+                return [f"Error: input too long: {len(input.split())}"] * max(
+                    n, beam_size
+                )
 
             # Create torch batch
             len1 = len(input.split())
@@ -184,14 +196,13 @@ class Translator:
                 len1 = len1.expand(n)
 
             # Decode
+            max_len = self.reloaded_params.max_len
             if beam_size == 1:
                 x2, len2 = self.decoder.generate(
                     enc1,
                     len1,
                     lang2_id,
-                    max_len=int(
-                        min(self.reloaded_params.max_len, 3 * len1.max().item() + 10)
-                    ),
+                    max_len=max_len,
                     sample_temperature=sample_temperature,
                 )
             else:
@@ -199,11 +210,9 @@ class Translator:
                     enc1,
                     len1,
                     lang2_id,
-                    max_len=int(
-                        min(self.reloaded_params.max_len, 3 * len1.max().item() + 10)
-                    ),
+                    max_len=max_len,
                     early_stopping=False,
-                    length_penalty=1.0,
+                    length_penalty=length_penalty,
                     beam_size=beam_size,
                 )
 
@@ -216,6 +225,8 @@ class Translator:
                     tok.append(restore_roberta_segmentation_sentence(" ".join(wid)))
                 else:
                     tok.append(" ".join(wid).replace("@@ ", ""))
+            if not detokenize:
+                return tok
             results = []
             for t in tok:
                 results.append(detokenizer(t))
@@ -231,6 +242,9 @@ if __name__ == "__main__":
     assert os.path.isfile(
         params.model_path
     ), f"The path to the model checkpoint is incorrect: {params.model_path}"
+    assert params.input is None or os.path.isfile(
+        params.input
+    ), f"The path to the model checkpoint is incorrect: {params.input}"
     assert os.path.isfile(
         params.BPE_path
     ), f"The path to the BPE tokens is incorrect: {params.BPE_path}"
@@ -246,7 +260,11 @@ if __name__ == "__main__":
 
     # read input code from stdin
     src_sent = []
-    input = sys.stdin.read().strip()
+    input = (
+        open(params.input).read().strip()
+        if params.input is not None
+        else sys.stdin.read().strip()
+    )
 
     print(f"Input {params.src_lang} function:")
     print(input)

@@ -4,32 +4,57 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
-
 import math
 import os
+import random
 import time
 from collections import OrderedDict
+from concurrent.futures.process import ProcessPoolExecutor
 from logging import getLogger
 
 import apex
 import numpy as np
 import torch
-from torch import nn
 from torch.nn.utils import clip_grad_norm_
 
+from .cache import ListCache, RoundRobinCache
+from .data.loader import SELF_TRAINED
+from .model.CustomDDP import CustomTorchDDP, CustomApexDDP
 from .optim import get_optimizer
-from .utils import parse_lambda_config, update_lambdas, add_noise
+from .utils import (
+    parse_lambda_config,
+    update_lambdas,
+    convert_to_text,
+    add_noise,
+    safe_index,
+    restore_segmentation_sentence,
+    get_programming_language_name,
+)
 from .utils import to_cuda, concat_batches, batch_sentences, show_batch
+import sys
+from pathlib import Path
+
+
+sys.path.append(str(Path(__file__).parents[3]))
+print("adding to path", str(Path(__file__).parents[3]))
+
+from codegen_sources.test_generation.test_runners.python_test_runner import (
+    PythonTestRunner,
+)
+from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
 
 logger = getLogger()
 
 
 class Trainer(object):
-    def __init__(self, data, params):
+    def __init__(self, data, params, model_names):
         """
         Initialize trainer.
         """
         # epoch / iteration size
+        self.params = params
+        self.data = data
+        self.MODEL_NAMES = model_names
         self.epoch_size = params.epoch_size
         if self.epoch_size == -1:
             self.epoch_size = len(self.data)
@@ -53,7 +78,7 @@ class Trainer(object):
                         self,
                         name,
                         [
-                            nn.parallel.DistributedDataParallel(
+                            CustomTorchDDP(
                                 model,
                                 device_ids=[params.local_rank],
                                 output_device=params.local_rank,
@@ -66,7 +91,7 @@ class Trainer(object):
                     setattr(
                         self,
                         name,
-                        nn.parallel.DistributedDataParallel(
+                        CustomTorchDDP(
                             model_attr,
                             device_ids=[params.local_rank],
                             output_device=params.local_rank,
@@ -89,19 +114,13 @@ class Trainer(object):
                             self,
                             name,
                             [
-                                apex.parallel.DistributedDataParallel(
-                                    model, delay_allreduce=True
-                                )
+                                CustomApexDDP(model, delay_allreduce=True)
                                 for model in model_attr
                             ],
                         )
                     else:
                         setattr(
-                            self,
-                            name,
-                            apex.parallel.DistributedDataParallel(
-                                model_attr, delay_allreduce=True
-                            ),
+                            self, name, CustomApexDDP(model_attr, delay_allreduce=True),
                         )
 
         # stopping criterion used for early stopping
@@ -118,6 +137,13 @@ class Trainer(object):
         else:
             self.stopping_criterion = None
             self.best_stopping_criterion = None
+
+        if len(params.st_steps) > 0:
+            self.test_runners = {
+                "python": PythonTestRunner(timeout=params.st_test_timeout),
+                "cpp": CppTestRunner(timeout=params.st_test_timeout),
+            }
+            self.unit_tests = data[f"java_st_unit_tests"]
 
         # probability of masking out / randomize / not modify words to predict
         params.pred_probs = torch.FloatTensor(
@@ -163,14 +189,51 @@ class Trainer(object):
             + [("DO-%s-%s" % (l1, l2), []) for l1, l2 in params.do_steps]
             + [("Classif-%s-%s" % (l1, l2), []) for l1, l2 in params.classif_steps]
             + [("BT-%s-%s-%s" % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps]
+            + [
+                ("ST-%s:%s-%s" % (l1, l1, l2), [])
+                for l1, langs2 in params.st_steps
+                for l2 in langs2
+            ]
+            + [
+                ("ST-%s:%s-%s" % (l1, l2, l1), [])
+                for l1, langs2 in params.st_steps
+                for l2 in langs2
+            ]
+            + [
+                ("ST-%s:%s-%s" % (l1, l2_1, l2_2), [])
+                for l1, langs2 in params.st_steps
+                for l2_1 in langs2
+                for l2_2 in langs2
+                if l2_1 != l2_2
+            ]
         )
         self.last_time = time.time()
-
+        self.st_langs = set()
+        for lang1, langs2 in params.st_steps:
+            for l1 in [lang1] + list(langs2):
+                for l2 in [lang1] + list(langs2):
+                    if l1 < l2:
+                        self.st_langs.add((l1, l2))
+        self.cache_class = RoundRobinCache if params.robin_cache else ListCache
+        self.st_cache = {
+            tuple([l1, l2]): self.cache_class(params=params) for l1, l2 in self.st_langs
+        }
+        self.number_consecutive_reads = 0
+        if params.cache_init_path != "":
+            self.load_initial_cache()
         # reload potential checkpoints
         self.reload_checkpoint()
 
         # initialize lambda coefficients and their configurations
         parse_lambda_config(params)
+
+    def load_initial_cache(self):
+        for (l1, l2), cache in self.st_cache.items():
+            cache_path = Path(self.params.cache_init_path).joinpath(
+                f"cache_{l1}-{l2}.pkl"
+            )
+            assert cache_path.is_file(), f"initial cache file {cache_path} is missing"
+            cache.load(cache_path)
 
     def set_parameters(self):
         """
@@ -367,10 +430,24 @@ class Trainer(object):
         # log speed + stats + learning rate
         logger.info(s_iter + s_speed + s_stat + s_lr + s_bt_samp)
 
-    def get_iterator(self, iter_name, lang1, lang2, stream, span=None):
+    def get_iterator(
+        self,
+        iter_name,
+        lang1,
+        lang2,
+        stream,
+        span=None,
+        self_training=False,
+        st_scores_cutoff=None,
+    ):
         """
         Create a new iterator for a dataset.
         """
+        if st_scores_cutoff is not None:
+            assert (
+                self_training
+            ), f"st_scores_cutoff should only be set for self_training"
+        splt = SELF_TRAINED if self_training else "train"
         logger.info(
             "Creating new training data iterator (%s) ..."
             % ",".join([str(x) for x in [iter_name, lang1, lang2] if x is not None])
@@ -378,19 +455,19 @@ class Trainer(object):
         if lang2 is None:
             if stream:
                 if span is None:
-                    iterator = self.data["mono_stream"][lang1]["train"].get_iterator(
+                    iterator = self.data["mono_stream"][lang1][splt].get_iterator(
                         shuffle=True
                     )
                 else:
                     iterator = self.data["mono_stream"][(lang1, span)][
-                        "train"
+                        splt
                     ].get_iterator(shuffle=True)
             else:
                 assert self.params.gen_tpb_multiplier > 0
                 it = (
-                    self.data["mono"][lang1]["train"]
+                    self.data["mono"][lang1][splt]
                     if span is None
-                    else self.data["mono"][(lang1, span)]["train"]
+                    else self.data["mono"][(lang1, span)][splt]
                 )
                 iterator = it.get_iterator(
                     shuffle=True,
@@ -398,14 +475,16 @@ class Trainer(object):
                     n_sentences=-1,
                     tokens_per_batch=self.params.tokens_per_batch
                     * (self.params.gen_tpb_multiplier if iter_name == "bt" else 1),
+                    st_scores_cutoff=st_scores_cutoff,
                 )
         else:
+            assert not self_training
             assert stream is False
             _lang1, _lang2 = (lang1, lang2) if lang1 < lang2 else (lang2, lang1)
             it = (
-                self.data["para"][(_lang1, _lang2)]["train"]
+                self.data["para"][(_lang1, _lang2)][splt]
                 if span is None
-                else self.data["para"][(_lang1, _lang2, span)]["train"]
+                else self.data["para"][(_lang1, _lang2, span)][splt]
             )
             iterator = it.get_iterator(
                 shuffle=True,
@@ -422,10 +501,23 @@ class Trainer(object):
         self.iterators[key] = iterator
         return iterator
 
-    def get_batch(self, iter_name, lang1, lang2=None, stream=False, span=None):
+    def get_batch(
+        self,
+        iter_name,
+        lang1,
+        lang2=None,
+        stream=False,
+        span=None,
+        self_training=False,
+        st_scores_cutoff=None,
+    ):
         """
         Return a batch of sentences from a dataset.
         """
+        if st_scores_cutoff is not None:
+            assert (
+                self_training
+            ), f"st_scores_cutoff should only be set for self_training"
         assert lang1 in self.params.langs
         assert (
             lang2 is None
@@ -439,12 +531,34 @@ class Trainer(object):
             if span is not None
             else self.iterators.get((iter_name, lang1, lang2), None)
         )
+        if (
+            st_scores_cutoff
+            and self.params.st_refresh_iterator_rate > 0
+            and self.n_iter % self.params.st_refresh_iterator_rate == 0
+        ):
+            iterator = None
         if iterator is None:
-            iterator = self.get_iterator(iter_name, lang1, lang2, stream, span)
+            iterator = self.get_iterator(
+                iter_name,
+                lang1,
+                lang2,
+                stream,
+                span,
+                self_training=self_training,
+                st_scores_cutoff=st_scores_cutoff,
+            )
         try:
             x = next(iterator)
         except StopIteration:
-            iterator = self.get_iterator(iter_name, lang1, lang2, stream, span)
+            iterator = self.get_iterator(
+                iter_name,
+                lang1,
+                lang2,
+                stream,
+                span,
+                self_training=self_training,
+                st_scores_cutoff=st_scores_cutoff,
+            )
             x = next(iterator)
         return x if lang2 is None or lang1 < lang2 else x[::-1]
 
@@ -696,7 +810,7 @@ class Trainer(object):
             positions = None
             langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
         elif lang1 == lang2:
-            (x1, len1) = self.get_batch(name, lang1)
+            (x1, len1, _, _) = self.get_batch(name, lang1)
             (x2, len2) = (x1, len1)
             (x1, len1) = add_noise(x1, len1, self.params, len(self.data["dico"]) - 1)
             x, lengths, positions, langs = concat_batches(
@@ -736,6 +850,12 @@ class Trainer(object):
         """
         Save the model / checkpoints.
         """
+        for (lang1, lang2), cache in self.st_cache.items():
+            path = os.path.join(
+                self.params.dump_path,
+                f"cache_{name}-{lang1}-{lang2}-{self.params.global_rank}.pkl",
+            )
+            cache.save(path)
         if not self.params.is_master:
             return
 
@@ -788,6 +908,16 @@ class Trainer(object):
                 assert os.path.isfile(checkpoint_path)
         logger.warning(f"Reloading checkpoint from {checkpoint_path} ...")
         data = torch.load(checkpoint_path, map_location="cpu")
+
+        for (lang1, lang2), cache in self.st_cache.items():
+            checkpoint_path = Path(checkpoint_path)
+            cache_path = Path(checkpoint_path).parent.joinpath(
+                f"cache_{str(checkpoint_path.name).replace('.pth', '')}-{lang1}-{lang2}-{self.params.global_rank}.pkl"
+            )
+            logger.warning(f"Reloading cache from {cache_path} ...")
+            self.st_cache[(lang1, lang2)] = self.cache_class.from_file(
+                cache_path, self.params
+            )
 
         # reload model parameters
         for name in self.MODEL_NAMES:
@@ -894,6 +1024,7 @@ class Trainer(object):
                     os.system("scancel " + os.environ["SLURM_JOB_ID"])
                 exit()
         self.save_checkpoint("checkpoint", include_optimizers=True)
+        self.st_translation_stats = {}
         self.epoch += 1
 
     def round_batch(self, x, lengths, positions, langs):
@@ -1095,7 +1226,7 @@ class SingleTrainer(Trainer):
         if classifier is not None:
             self.classifier = [classifier]
 
-        super().__init__(data, params)
+        super().__init__(data, params, self.MODEL_NAMES)
 
 
 class EncDecTrainer(Trainer):
@@ -1110,13 +1241,9 @@ class EncDecTrainer(Trainer):
         self.decoder = decoder
         self.data = data
         self.params = params
-        self.generation_index = 0
-        self.generation_inputs = ()
-        self.len_generation_inputs = ()
-        self.generated_data = ()
-        self.len_generated_data = ()
 
-        super().__init__(data, params)
+        self.st_translation_stats = {}
+        super().__init__(data, params, self.MODEL_NAMES)
 
     def mt_step(
         self,
@@ -1153,7 +1280,7 @@ class EncDecTrainer(Trainer):
         # generate batch
         if lang1 == lang2:
             assert not span, "spans not supported for AE steps"
-            (x1, len1) = self.get_batch("ae", lang1)
+            (x1, len1, _, _) = self.get_batch("ae", lang1)
             (x2, len2) = (x1, len1)
             (x1, len1) = add_noise(x1, len1, self.params, len(self.data["dico"]) - 1)
         elif span:
@@ -1247,7 +1374,9 @@ class EncDecTrainer(Trainer):
         if self.decoder is not None:
             [dec.eval() for dec in self.decoder]
 
-    def bt_step(self, lang1, lang2, lang3, lambda_coeff, sample_temperature):
+    def bt_step(
+        self, lang1, lang2, lang3, lambda_coeff, sample_temperature, show_example=False
+    ):
         """
         Back-translation step for machine translation.
         """
@@ -1262,29 +1391,17 @@ class EncDecTrainer(Trainer):
         lang1_id = params.lang2id[lang1]
         lang2_id = params.lang2id[lang2]
 
-        _encoder = self.encoder[0].module if params.multi_gpu else self.encoder[0]
-        if params.separate_decoders:
-            _decoder_lang1 = (
-                self.decoder[lang1_id].module
-                if params.multi_gpu
-                else self.decoder[lang1_id]
-            )
-            _decoder_lang2 = (
-                self.decoder[lang2_id].module
-                if params.multi_gpu
-                else self.decoder[lang2_id]
-            )
-        else:
-            _decoder_lang1 = _decoder_lang2 = (
-                self.decoder[0].module if params.multi_gpu else self.decoder[0]
-            )
+        _encoder = self.encoder[0]
 
-        decoder1 = (
+        _decoder_lang1 = (
             self.decoder[lang1_id] if params.separate_decoders else self.decoder[0]
+        )
+        _decoder_lang2 = (
+            self.decoder[lang2_id] if params.separate_decoders else self.decoder[0]
         )
 
         # generate source batch
-        x1, len1 = self.get_batch("bt", lang1)
+        x1, len1, _, _ = self.get_batch("bt", lang1)
         langs1 = x1.clone().fill_(lang1_id)
 
         # cuda
@@ -1315,11 +1432,23 @@ class EncDecTrainer(Trainer):
             # free CUDA memory
             del enc1
 
-        self.generation_index += 1
         # training mode
         self.train_mode()
 
-        # encode generate sentence
+        # show and example for debugging
+        if show_example:
+            show_batch(
+                logger,
+                [
+                    ("Generated source", x2.transpose(0, 1)),
+                    ("Target (x1)", x1.transpose(0, 1)),
+                ],
+                self.data["dico"],
+                self.params.roberta_mode,
+                f"BT {lang1}-{lang2}",
+            )
+
+        # encode generated sentence
         enc2 = self.encoder[0]("fwd", x=x2, lengths=len2, langs=langs2, causal=False)
         enc2 = enc2.transpose(0, 1)
 
@@ -1330,7 +1459,7 @@ class EncDecTrainer(Trainer):
         y1 = x1[1:].masked_select(pred_mask[:-1])
 
         # decode original sentence
-        dec3 = decoder1(
+        dec3 = _decoder_lang1(
             "fwd",
             x=x1,
             lengths=len1,
@@ -1341,7 +1470,7 @@ class EncDecTrainer(Trainer):
         )
 
         # loss
-        _, loss = decoder1(
+        _, loss = _decoder_lang1(
             "predict", tensor=dec3, pred_mask=pred_mask, y=y1, get_scores=False
         )
         self.stats[("BT-%s-%s-%s" % (lang1, lang2, lang3))].append(loss.item())
@@ -1354,3 +1483,460 @@ class EncDecTrainer(Trainer):
         self.n_sentences += params.batch_size
         self.stats["processed_s"] += len1.size(0)
         self.stats["processed_w"] += (len1 - 1).sum().item()
+
+    def st_step(self, lang1, langs2, lambda_coeff, show_example=False):
+        """
+        Training on self-trained examples using unit tests
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        assert all([lang1 != lang2 and lang2 is not None for lang2 in langs2]), (
+            lang1,
+            langs2,
+        )
+        params = self.params
+
+        lang1_id = params.lang2id[lang1]
+
+        _encoder = self.encoder[0]
+
+        if params.is_master and params.st_show_stats:
+            for (l1, l2), cache in self.st_cache.items():
+                logger.info(f"{l1}-{l2} cache size: {len(cache)}")
+        dico = self.data["dico"]
+        if 0 <= params.st_sample_cache_ratio < 1:
+            read_from_cache = random.random() < params.st_sample_cache_ratio and all(
+                [len(cache) >= params.cache_warmup for cache in self.st_cache.values()]
+            )
+        else:
+            if self.number_consecutive_reads < params.st_sample_cache_ratio and all(
+                [len(cache) >= params.cache_warmup for cache in self.st_cache.values()]
+            ):
+                read_from_cache = True
+                self.number_consecutive_reads += 1
+            else:
+                read_from_cache = False
+                self.number_consecutive_reads = 0
+
+        if read_from_cache:
+            if params.st_show_stats:
+                logger.info(f"reading {params.st_sample_size} elements from the cache")
+            for l1, l2 in [(l1, l2) for l1, l2 in self.st_langs]:
+                (x1, len1), (x2, len2) = self.st_cache[(l1, l2)].sample_batch(
+                    params.st_sample_size
+                )
+                if params.st_show_stats:
+                    logger.info(f"actual batch size: {len(len2)}")
+                x1, len1, x2, len2 = to_cuda(x1, len1, x2, len2)
+                self.train_on_st_data(
+                    x1,
+                    len1,
+                    l1,
+                    x2,
+                    len2,
+                    l2,
+                    dico,
+                    params,
+                    lambda_coeff,
+                    show_example,
+                    lang_src=lang1,
+                )
+                # number of processed sentences / words
+                self.n_sentences += params.batch_size
+                self.stats["processed_s"] += len1.size(0)
+                self.stats["processed_w"] += (len1 - 1).sum().item()
+                del x1, len1, x2, len2
+        else:
+            # generate source batch
+            (x1, len1, id1, lenid1) = self.get_batch(
+                "st",
+                lang1,
+                self_training=True,
+                st_scores_cutoff=(
+                    params.st_min_mutation_score,
+                    self.params.st_min_asserts,
+                ),
+            )
+            assert id1 is not None
+            assert lenid1 is not None
+            assert x1.shape[1] == len(len1) == id1.shape[1] == len(lenid1)
+            sent_ids = convert_to_text(id1, lenid1, dico, params)
+            sent_ids = [
+                restore_segmentation_sentence(i, roberta_mode=params.roberta_mode)
+                for i in sent_ids
+            ]
+            langs1 = x1.clone().fill_(lang1_id)
+
+            # cuda
+            x1, len1, langs1 = to_cuda(x1, len1, langs1)
+
+            with torch.no_grad():
+
+                # evaluation mode
+                self.eval_mode()
+
+                # encode source sentence and translate it
+                enc1 = _encoder("fwd", x=x1, lengths=len1, langs=langs1, causal=False)
+                enc1 = enc1.transpose(0, 1)
+
+            # We generate data for every language in langs2 from the input in lang1
+            generated_x2 = {}
+            generated_x2_len = {}
+            any_successful = {}
+            for lang2 in langs2:
+                (
+                    selected_x1,
+                    selected_len1,
+                    x2,
+                    len2,
+                    any_successful_beam,
+                ) = self.generate_parallel_examples(
+                    x1, len1, enc1, lang1, lang2, sent_ids, params
+                )
+                if selected_x1 is None:
+                    continue
+                generated_x2[lang2] = x2
+                generated_x2_len[lang2] = len2
+                any_successful[lang2] = any_successful_beam
+
+                self.train_on_st_data(
+                    selected_x1,
+                    selected_len1,
+                    lang1,
+                    generated_x2[lang2],
+                    generated_x2_len[lang2],
+                    lang2,
+                    dico,
+                    params,
+                    lambda_coeff,
+                    show_example,
+                    lang_src=lang1,
+                )
+
+                # if needed, train on pairs of langs2 elements
+                for lang2_2 in [
+                    lang for lang in any_successful.keys() if lang != lang2
+                ]:
+                    x2, len2, x2_2, len2_2 = self.cross_language_st_selection(
+                        generated_x2,
+                        generated_x2_len,
+                        any_successful,
+                        lang2,
+                        lang2_2,
+                        params,
+                    )
+                    if x2 is None:
+                        continue
+
+                    self.train_on_st_data(
+                        x2,
+                        len2,
+                        lang2,
+                        x2_2,
+                        len2_2,
+                        lang2_2,
+                        dico,
+                        params,
+                        lambda_coeff,
+                        show_example,
+                        lang_src=lang1,
+                    )
+            # number of processed sentences / words
+            self.n_sentences += params.batch_size
+            self.stats["processed_s"] += len1.size(0)
+            self.stats["processed_w"] += (len1 - 1).sum().item()
+
+    def cross_language_st_selection(
+        self, generated_x2, generated_x2_len, any_successful, lang2, lang2_2, params
+    ):
+        both_successful = [
+            (res2 and res2_2)
+            for res2, res2_2 in zip(any_successful[lang2], any_successful[lang2_2])
+        ]
+        assert (
+            len(any_successful[lang2])
+            == len(any_successful[lang2_2])
+            == len(both_successful)
+        )
+        if not any(both_successful):
+            return None, None, None, None
+        if params.is_master:
+            self.log_successful_st(both_successful, "-".join([lang2, lang2_2]))
+        mask_lang2 = [
+            b for i, b in enumerate(both_successful) if any_successful[lang2][i]
+        ]
+        len2 = generated_x2_len[lang2][mask_lang2]
+        x2 = generated_x2[lang2][: len2.max(), mask_lang2]
+        mask_lang2_2 = [
+            b for i, b in enumerate(both_successful) if any_successful[lang2_2][i]
+        ]
+        len2_2 = generated_x2_len[lang2_2][mask_lang2_2]
+        x2_2 = generated_x2[lang2_2][: len2_2.max(), mask_lang2_2]
+        assert len(x2.shape) == len(x2_2.shape) == 2, (x2.shape, x2_2.shape)
+        assert (x2 == self.params.eos_index).sum() == 2 * len(len2)
+        assert (x2_2 == self.params.eos_index).sum() == 2 * len(len2_2)
+        assert (
+            x2.shape[1]
+            == x2_2.shape[1]
+            == len(len2)
+            == len(len2_2)
+            == sum(both_successful)
+        ), (
+            x2.shape[1],
+            x2_2.shape[1],
+            len(len2),
+            len(len2_2),
+            sum(both_successful),
+        )
+        new_elements = [
+            (
+                x2[:, i].detach().clone().cpu(),
+                len2[i].detach().clone().cpu(),
+                x2_2[:, i].detach().clone().cpu(),
+                len2_2[i].detach().clone().cpu(),
+            )
+            if lang2 < lang2_2
+            else (
+                x2_2[:, i].detach().clone().cpu(),
+                len2_2[i].detach().clone().cpu(),
+                x2[:, i].detach().clone().cpu(),
+                len2[i].detach().clone().cpu(),
+            )
+            for i in range(len(len2))
+        ]
+        if params.st_show_stats:
+            logger.info(
+                f"Adding {len(len2)} elements to the cache for {lang2}-{lang2_2}"
+            )
+        self.st_cache[tuple(sorted([lang2, lang2_2]))].add(new_elements)
+        return x2, len2, x2_2, len2_2
+
+    def generate_parallel_examples(
+        self, x1, len1, enc1, lang1, lang2, sent_ids, params
+    ):
+        lang2_id = params.lang2id[lang2]
+        decoder = (
+            self.decoder[lang2_id] if params.separate_decoders else self.decoder[0]
+        )
+        decoder = decoder
+        # generate a translation
+        with torch.no_grad():
+
+            # evaluation mode
+            self.eval_mode()
+
+            # generate sentences in lang2
+            len_v = (3 * len1 + 10).clamp(max=params.max_len)
+            if self.params.fp16:
+                enc1 = enc1.half()
+            x2, len2, _ = decoder.generate_beam(
+                enc1,
+                len1,
+                lang2_id,
+                beam_size=int(params.st_beam_size),
+                length_penalty=params.st_length_penalty,
+                early_stopping=False,
+                max_len=len_v,
+            )
+            assert x2.shape[1] == len2.shape[1] == int(
+                params.st_beam_size
+            ) and x2.shape[2] == len(len2), (x2.shape, len2.shape)
+            text_hypotheses = convert_to_text(
+                x2, len2, self.data["dico"], params, generate_several_reps=True
+            )
+            assert len(text_hypotheses) == len(len1), (
+                len(text_hypotheses),
+                len(len1),
+            )
+            assert len(text_hypotheses[0]) == params.st_beam_size, (
+                len(text_hypotheses[0]),
+                len(params.st_beam_size),
+            )
+            text_hypotheses = [
+                [
+                    restore_segmentation_sentence(sent, params.roberta_mode)
+                    for sent in hyps
+                ]
+                for hyps in text_hypotheses
+            ]
+            test_outputs = self.get_test_outputs(text_hypotheses, sent_ids, lang=lang2,)
+
+            assert len(test_outputs) == len(len1), (len(test_outputs), len(len1))
+            test_outputs = [
+                [r[0] == "success" for r in beam_res] for beam_res in test_outputs
+            ]
+            first_successful_index = [safe_index(l, True) for l in test_outputs]
+            any_successful = [i is not None for i in first_successful_index]
+
+            if params.is_master:
+                self.log_successful_st(any_successful, lang2)
+            if not any(any_successful):
+                return None, None, None, None, any_successful
+            selected_len1 = len1[any_successful]
+            selected_x1 = x1[: selected_len1.max(), any_successful]
+            len2 = len2[any_successful]
+            # gather the lengths of the selected indices
+            first_successful_index = (
+                torch.tensor([i for i in first_successful_index if i is not None])
+                .long()
+                .to(x2.device)
+            )
+            len2 = len2.gather(1, first_successful_index.view(-1, 1)).squeeze(1)
+            assert len(len2.shape) == 1
+            x2 = x2[: len2.max(), :, any_successful]
+            assert first_successful_index.shape[0] == x2.shape[2]
+            # gather the elements corresponding to the first successful index
+            x2 = x2.gather(
+                1,
+                first_successful_index.view(1, -1).repeat(x2.shape[0], 1).unsqueeze(1),
+            ).squeeze(1)
+            assert len(x2.shape) == 2, x2.shape
+            assert (selected_x1 == self.params.eos_index).sum() == 2 * len(
+                selected_len1
+            )
+            assert (x2 == self.params.eos_index).sum() == 2 * len(selected_len1)
+            assert (
+                selected_x1.shape[1]
+                == x2.shape[1]
+                == len(selected_len1)
+                == len(len2)
+                == sum(any_successful)
+            ), (
+                selected_x1.shape[1],
+                x2.shape[1],
+                len(selected_len1),
+                len(len2),
+                sum(any_successful),
+            )
+        new_elements = [
+            (
+                x1[:, i].detach().clone().cpu(),
+                len1[i].detach().clone().cpu(),
+                x2[:, i].detach().clone().cpu(),
+                len2[i].detach().clone().cpu(),
+            )
+            if lang1 < lang2
+            else (
+                x2[:, i].detach().clone().cpu(),
+                len2[i].detach().clone().cpu(),
+                x1[:, i].detach().clone().cpu(),
+                len1[i].detach().clone().cpu(),
+            )
+            for i in range(len(len2))
+        ]
+        if params.st_show_stats:
+            logger.info(f"Adding {len(len2)} elements to the cache for {lang1}-{lang2}")
+        self.st_cache[tuple(sorted([lang1, lang2]))].add(new_elements)
+
+        return selected_x1, selected_len1, x2, len2, any_successful
+
+    def train_on_st_data(
+        self,
+        selected_x1,
+        selected_len1,
+        lang1,
+        x2,
+        len2,
+        lang2,
+        dico,
+        params,
+        lambda_coeff,
+        show_example,
+        lang_src,
+    ):
+        lang1_id = params.lang2id[lang1]
+        lang2_id = params.lang2id[lang2]
+        lang1_ids = selected_x1.clone().fill_(lang1_id)
+        lang2_ids = x2.clone().fill_(lang2_id)
+        _decoder_lang1 = (
+            self.decoder[lang1_id] if params.separate_decoders else self.decoder[0]
+        )
+        _decoder_lang2 = (
+            self.decoder[lang2_id] if params.separate_decoders else self.decoder[0]
+        )
+        # training mode
+        self.train_mode()
+        # show an example for debugging
+        if show_example:
+            show_batch(
+                logger,
+                [
+                    ("Source", selected_x1.transpose(0, 1)),
+                    ("Generated Target", x2.transpose(0, 1)),
+                ],
+                dico,
+                self.params.roberta_mode,
+                f"ST {lang1}:{lang1}-{lang2}",
+            )
+        # Train on lang1 -> lang2
+        loss1 = self.get_st_loss(
+            _decoder_lang2, selected_x1, selected_len1, lang1_ids, x2, len2, lang2_ids
+        )
+        self.stats[("ST-%s:%s-%s" % (lang_src, lang1, lang2))].append(loss1.item())
+        # Train on lang2 -> lang1
+        loss2 = self.get_st_loss(
+            _decoder_lang1, x2, len2, lang2_ids, selected_x1, selected_len1, lang1_ids
+        )
+        self.stats[("ST-%s:%s-%s" % (lang_src, lang2, lang1))].append(loss2.item())
+        loss = lambda_coeff * (loss1 + loss2)
+        # optimize
+        self.optimize(loss)
+
+    def log_successful_st(self, any_successful, key):
+        if key not in self.st_translation_stats:
+            self.st_translation_stats[key] = {"successful": 0, "failed": 0}
+        self.st_translation_stats[key]["successful"] += sum(any_successful)
+        self.st_translation_stats[key]["failed"] += len(any_successful)
+        if (
+            sum(self.st_translation_stats[key].values()) > 0
+            and self.params.st_show_stats
+        ):
+            logger.info(
+                f"Ratio of successful translations {key}: "
+                f"{self.st_translation_stats[key]['successful'] / self.st_translation_stats[key]['failed']:.2%}"
+                f" ({self.st_translation_stats[key]['successful']} / {self.st_translation_stats[key]['failed']})"
+            )
+
+    def get_st_loss(self, decoder, x1, len1, langs1, x2, len2, langs2):
+        # encode generated sentence
+        enc1 = self.encoder[0]("fwd", x=x1, lengths=len1, langs=langs1, causal=False)
+        enc1 = enc1.transpose(0, 1)
+        # words to predict
+        alen = torch.arange(len2.max(), dtype=torch.long, device=len1.device)
+        # do not predict anything given the last target word
+        pred_mask = alen[:, None] < len2[None] - 1
+        y2 = x2[1:].masked_select(pred_mask[:-1])
+        # decode original sentence
+        dec2 = decoder(
+            "fwd",
+            x=x2,
+            lengths=len2,
+            langs=langs2,
+            causal=True,
+            src_enc=enc1,
+            src_len=len1,
+        )
+        # loss
+        _, loss = decoder(
+            "predict", tensor=dec2, pred_mask=pred_mask, y=y2, get_scores=False
+        )
+        return loss
+
+    def get_test_outputs(self, sentences, sent_ids, lang):
+        lang = get_programming_language_name(lang)
+        test_runner = self.test_runners[lang]
+        tests = [self.unit_tests[lang][test_id] for test_id in sent_ids]
+        assert len(sentences) == len(
+            tests
+        ), f"tests of length {len(tests)} while functions are of length {len(sentences)}"
+        executor = ProcessPoolExecutor()
+        jobs = [
+            [
+                executor.submit(test_runner.get_tests_results, func, test)
+                for func in funcs
+            ]
+            for funcs, test in zip(sentences, tests)
+        ]
+        res = [[job.result() for job in beam_jobs] for beam_jobs in jobs]
+        return res

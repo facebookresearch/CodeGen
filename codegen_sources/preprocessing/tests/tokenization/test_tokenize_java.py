@@ -10,6 +10,13 @@ import pytest
 from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
 from pathlib import Path
 
+from codegen_sources.preprocessing.tests.tokenization.tokenization_tests_utils import (
+    tokenizer_test,
+    detokenize_non_invertible,
+    detokenize_invertible,
+    compare_funcs,
+)
+
 processor = JavaProcessor(root_folder=Path(__file__).parents[4].joinpath("tree-sitter"))
 TESTS = []
 
@@ -274,7 +281,8 @@ overload(1.0f);""",
 )
 
 TESTS_TOKENIZE_DETOKENIZE_STRING = [
-    r"""public int read ( ) throws IOException {
+    (
+        r"""public int read ( ) throws IOException {
   int current = super . read ( ) ;
   if ( current == '\r' || ( current == '\n' && lastChar != '\r' ) ) {
     lineCounter ++ ;
@@ -282,21 +290,32 @@ TESTS_TOKENIZE_DETOKENIZE_STRING = [
   lastChar = current ;
   return lastChar ;
 }""",
-    r"""public int curly_brackets ( ) throws IOException {
+        """""",
+    ),
+    (
+        r"""public int curly_brackets ( ) throws IOException {
   System . out . println ( "This } is the output" ) ;
   System . out . println ( "This {} is the output" ) ;
   System . out . println ( '}' ) ;
 }""",
-    r"""public int commas ( ) throws IOException {
+        """""",
+    ),
+    (
+        r"""public int commas ( ) throws IOException {
   System . out . println ( "This ; is the output" ) ;
   System . out . println ( "This , is the output" ) ;
   System . out . println ( ';' ) ;
   System . out . println ( ',' ) ;
 }""",
-    r"""public void inException ( ) {
+        """""",
+    ),
+    (
+        r"""public void inException ( ) {
   throw new IllegalArgumentException ( "Type \'" + typeToEvaluate + "\' is not a Class, " + "ParameterizedType, GenericArrayType or TypeVariable. Can't extract type." ) ;
 }
 """,
+        """""",
+    ),
 ]
 
 TESTS_DONT_PROCESS_STRINGS = [
@@ -476,6 +495,23 @@ public class HelloWorld
     )
 ]
 
+TESTS_CHARS = [
+    (
+        r"""
+char a = 'a' ;
+""",
+        ["char", "a", "=", "' a '", ";"],
+    )
+]
+
+TESTS_DETOKENIZE_CHARS = [
+    (
+        r"char a='a';",
+        r"""char a = 'a' ;
+""",
+    )
+]
+
 
 def test_java_tokenizer_discarding_comments():
     for i, (x, y) in enumerate(TESTS):
@@ -577,14 +613,55 @@ def test_java_detokenizer_keeping_comments():
 
 
 def test_tokenize_detokenize():
-    test_detokenize_invertible(TESTS_TOKENIZE_DETOKENIZE_STRING)
+    detokenize_invertible(TESTS_TOKENIZE_DETOKENIZE_STRING, processor)
 
 
-@pytest.mark.skip("Helper function")
-def test_detokenize_invertible(test_examples):
-    for i, x in enumerate(test_examples):
-        x_ = processor.detokenize_code(processor.tokenize_code(x, keep_comments=True))
-        if x_.strip() != x.strip():
-            raise Exception(
-                f"Expected:\n==========\n{x.strip()}\nbut found:\n==========\n{x_.strip()}"
-            )
+def test_java_chars():
+    tokenizer_test(TESTS_CHARS, processor, keep_comments=False)
+
+
+def test_detokenize_chars():
+    detokenize_non_invertible(TESTS_DETOKENIZE_CHARS, processor)
+
+
+FUNC_EXTRACTION = [
+    (
+        """
+@SuppressWarnings("resource")
+public class Main {
+	public static void main(String args[]) {
+	return 0;
+	}
+}""",
+        (["public static void main ( String args [ ] ) { return 0 ; }"], []),
+    ),
+    (
+        """
+public class Room {
+    double length;
+    double breadth;
+
+	public static int return_zero() {
+	return 0;
+	}
+	public double area(){
+	    return length * breadth;
+	}
+}""",
+        [
+            ["public static int return_zero ( ) { return 0 ; }"],
+            ["public double area ( ) { return length * breadth ; }"],
+        ],
+    ),
+]
+
+
+def test_extract_java_functions():
+    for input_file, expected_funcs in FUNC_EXTRACTION:
+        actual_funcs_sa, actual_funcs_cl = processor.extract_functions(
+            processor.tokenize_code(input_file)
+        )
+        print(actual_funcs_sa, actual_funcs_cl)
+        expected_sa, expected_cl = expected_funcs
+        compare_funcs(actual_funcs_sa, expected_sa)
+        compare_funcs(actual_funcs_cl, expected_cl)

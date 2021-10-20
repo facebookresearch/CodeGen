@@ -112,7 +112,9 @@ def check_model_params(params):
         else:
             s = params.reload_model.split(",")
             assert len(s) == 2
-            assert all([x == "" or os.path.isfile(x) for x in s])
+            assert all([x == "" or os.path.isfile(x) for x in s]), [
+                x for x in s if not os.path.isfile(x)
+            ]
         if params.use_classifier and params.reload_classifier == "":
             params.reload_classifier = params.reload_model
 
@@ -143,6 +145,7 @@ def set_pretrain_emb(model, dico, word2id, embeddings):
     )
 
 
+@torch.no_grad()
 def build_model(params, dico):
     """
     Build model.
@@ -199,6 +202,7 @@ def build_model(params, dico):
             set_pretrain_emb(encoder, dico, word2id, embeddings)
             for decoder in decoders:
                 set_pretrain_emb(decoder, dico, word2id, embeddings)
+
         # reload a pretrained model
         if params.reload_model != "":
             logger.info("============ Model Reloading")
@@ -235,6 +239,7 @@ def build_model(params, dico):
         return [encoder.cuda()], [dec.cuda() for dec in decoders]
 
 
+@torch.no_grad()
 def build_classifier(params):
     """
     Build classifier.

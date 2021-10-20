@@ -177,7 +177,7 @@ def create_symlink(file_path, symlink):
     if isinstance(symlink, str):
         symlink = Path(symlink)
     assert (
-        symlink.parent.joinpath(file_path).resolve().is_file()
+        file_path.is_file() or symlink.parent.joinpath(file_path).resolve().is_file()
     ), f"{file_path} is not a file: resolved into {symlink.parent.joinpath(file_path).resolve()}"
     assert not symlink.is_file(), f"{symlink} already exists"
     process = subprocess.run(
@@ -189,3 +189,64 @@ def create_symlink(file_path, symlink):
     assert (
         symlink.is_file() and process.returncode == 0
     ), f"failed to create symlink {symlink} for file {file_path} "
+
+
+def matched(str):
+    count = 0
+    is_in_string = False
+    string_char = ""
+    for i, c in enumerate(str):
+        if is_in_string:
+            if c == string_char and (
+                previous_char != "\\" or (i >= 2 and str[i - 2] == "\\")
+            ):
+                is_in_string = False
+            previous_char = c
+            continue
+        if c == "(":
+            count += 1
+        elif c == ")":
+            count -= 1
+        if count < 0:
+            return False
+        if c == '"' or c == "'":
+            is_in_string = True
+            string_char = c
+    return count == 0
+
+
+def split_arguments(s):
+    open_parentheses = {"[", "{", "("}
+    close_parentheses = {"]", "}", ")"}
+    s = s.strip()
+    while s.startswith("(") and s.endswith(")") and matched(s[1:-1]):
+        s = s[1:-1]
+    parenth_count = 0
+    arguments = [[]]
+    is_in_string = False
+    string_char = ""
+    previous_char = ""
+    for i, c in enumerate(s):
+        if is_in_string:
+            arguments[-1].append(c)
+            if c == string_char and (
+                previous_char != "\\" or (i >= 2 and s[i - 2] == "\\")
+            ):
+                is_in_string = False
+            previous_char = c
+            continue
+        if c in open_parentheses:
+            parenth_count += 1
+        if c in close_parentheses:
+            parenth_count -= 1
+        if c == "," and parenth_count == 0:
+            arguments.append([])
+        else:
+            arguments[-1].append(c)
+        previous_char = c
+        if c == '"' or c == "'":
+            is_in_string = True
+            string_char = c
+
+    assert parenth_count == 0, (parenth_count, s)
+    return ["".join(chars) for chars in arguments]

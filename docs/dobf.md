@@ -217,7 +217,7 @@ python train.py
 --optimizer 'adam_inverse_sqrt,warmup_updates=10000,lr=0.0001,weight_decay=0.01' \
 --eval_bleu true \
 --eval_computation true \
---has_sentences_ids true
+--has_sentence_ids "valid|para,test|para" \
 --generate_hypothesis true \
 --save_periodic 1 \
 --validation_metrics 'valid_python_sa-java_sa_mt_comp_acc'  

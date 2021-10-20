@@ -83,7 +83,7 @@ class FastBPEMode(BPEMode):
             output = file + self.ext
         vocab = self.vocab_path if self.vocab_path is not None else ""
         process = subprocess.run(
-            f"{FAST} applybpe {output} {file} {self.codes} {vocab}",
+            f"{FAST} applybpe {output} {file} {self.codes} {vocab if self.use_vocab else ''}",
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

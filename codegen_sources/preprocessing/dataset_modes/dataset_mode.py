@@ -130,6 +130,7 @@ class DatasetMode(Generic[T]):
         if local_parallelism is not None:
             logger.info(f"Using {local_parallelism} processors.")
             executor = ProcessPoolExecutor(max_workers=local_parallelism)
+
         jobs = []
 
         assert any(
@@ -370,16 +371,30 @@ class DatasetMode(Generic[T]):
         This regrouping is a concatenation of the .tok files.
         Therefore order is preserved and works for parallel datasets as well.
         """
+        files_to_group_template = "%s.[0-9]*.%s.tok"
+        all_files_template = "%s.all.%s.tok"
+        self.regroup_files(all_files_template, files_to_group_template)
+
+    def regroup_bpe(self):
+        """
+        Regroup all the bpe files in a single file
+        Gives the possibility to train on a single GPU
+        """
+        files_to_group_template = "%s.train.%s.[0-9]*.bpe"
+        all_files_template = "%s.train.%s.bpe"
+        self.regroup_files(all_files_template, files_to_group_template)
+
+    def regroup_files(self, all_files_template, files_to_group_template):
         for lang in self.languages:
             for suffix in self.suffixes:
-                all_tok_path = self.folder.joinpath(f"{lang}.all.{suffix}.tok")
+                files_to_group = files_to_group_template % (lang, suffix)
+                all_files_name = all_files_template % (lang, suffix)
+                all_tok_path = self.folder.joinpath(all_files_name)
                 if is_valid_file(all_tok_path):
                     continue
-                if len(list(self.folder.glob(f"{lang}.*[0-9].{suffix}.tok"))) == 0:
+                if len(list(self.folder.glob(files_to_group))) == 0:
                     continue
-                command = (
-                    f"cd {self.folder}; cat {lang}.*[0-9].{suffix}.tok > {all_tok_path}"
-                )
+                command = f"cd {self.folder}; cat {files_to_group} > {all_tok_path}"
                 proc = subprocess.run(
                     command,
                     shell=True,
@@ -487,6 +502,7 @@ class DatasetMode(Generic[T]):
                             line = f"{line_id}/{line_id } | {line}"
 
                         if "|" not in line or "/" not in line.split("|", 1)[0]:
+                            logger.warning(f"Missing ID at line {line_id}")
                             continue
 
                         repo, content = line.split("|", 1)
@@ -600,6 +616,8 @@ class DatasetMode(Generic[T]):
         for job in jobs:
             job.result()
         logger.info("BPE done.")
+        # logger.info("Regrouping BPE")
+        # self.regroup_bpe()
 
     def get_vocab(self, executor: Executor = None):
         logger.info("")
@@ -627,11 +645,8 @@ class DatasetMode(Generic[T]):
         logger.info("")
         logger.info("")
         logger.info("========== Binarize ===========")
-        if executor is None:
-            if local_parallelism is None:
-                executor = LocalExecutor(folder=self.folder.joinpath("log"))
-            else:
-                executor = ProcessPoolExecutor(max_workers=local_parallelism)
+        if local_parallelism is not None:
+            executor = ProcessPoolExecutor(max_workers=local_parallelism)
         jobs = []
         for f in chain(
             *[

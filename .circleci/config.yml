@@ -51,25 +51,48 @@ jobs:
           paths:
             - ./venv
           key: v0-dependencies-{{ checksum "ci_requirements.txt" }}
+      - run:
+          name: install gtest
+          command: |
+            wget https://github.com/google/googletest/archive/release-1.8.0.tar.gz
+            tar xf release-1.8.0.tar.gz
+            cd googletest-release-1.8.0
+            cmake -DBUILD_SHARED_LIBS=ON .
+            make
+            sudo cp -a googletest/include/gtest /usr/include
+            sudo cp -a googlemock/gtest/libgtest_main.so googlemock/gtest/libgtest.so /usr/lib/
 
       - run:
           name: Run tokenization tests
           when: always
           command: |
             . venv/bin/activate
-            pytest ./codegen_sources/preprocessing/tests/tokenization
+            pytest -s ./codegen_sources/preprocessing/tests/tokenization
       - run:
           name: Run obfuscation tests
           when: always
           command: |
             . venv/bin/activate
-            pytest ./codegen_sources/preprocessing/tests/obfuscation
-      
+            pytest -s ./codegen_sources/preprocessing/tests/obfuscation
+
       - run:
           name: run_pipeline
           when: always
           command: |
             . venv/bin/activate
-            pytest ./codegen_sources/preprocessing/tests/pipeline
-           
+            pytest -s ./codegen_sources/preprocessing/tests/pipeline
 
+
+      - run:
+          name: Run tests of evosuite unittests runners
+          when: always
+          command: |
+            . venv/bin/activate
+            pytest -s ./codegen_sources/test_generation/test_runners/tests/
+
+      - run:
+          name: Run tests for evosuite tests translators
+          when: always
+          command: |
+            . venv/bin/activate
+            pytest -s ./codegen_sources/test_generation/evosuite_tests_translators/tests/ --ignore codegen_sources/test_generation/evosuite_tests_translators/tests/resources

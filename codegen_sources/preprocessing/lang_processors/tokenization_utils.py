@@ -63,6 +63,9 @@ def process_string(tok, char2tok, tok2char, is_comment, do_whole_processing=True
     tok = tok.replace("\r", "")
     for special_token, char in tok2char.items():
         tok = tok.replace(special_token, char)
+    if tok[0].isalpha():
+        # for special strings, (e.g. L "s" we should remove the space after L)
+        tok = tok.replace(f"{tok[0]} ", tok[0])
     return tok
 
 
