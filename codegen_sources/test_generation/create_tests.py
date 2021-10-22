@@ -18,7 +18,6 @@ from utils import add_root_to_path
 
 add_root_to_path()
 
-from codegen_sources.model.src.utils import get_java_bin_path
 from codegen_sources.preprocessing.lang_processors.tree_sitter_processor import (
     TREE_SITTER_ROOT,
 )
@@ -33,7 +32,7 @@ EVOSUITE_JAR_PATH = Path(
 )
 assert (
     EVOSUITE_JAR_PATH.is_file()
-), "EvoSuite Jar is missing, run wget https://github.com/EvoSuite/evosuite/releases/download/v1.1.0/evosuite-1.1.0.jar in the test_generation folder."
+), "EvoSuite Jar is missing, run wget https://github.com/EvoSuite/evosuite/releases/download/v1.1.0/evosuite-1.1.0.jar"
 
 MUTATION_SCORE_CUTOFF = 0.9
 
@@ -86,7 +85,7 @@ def run_command_compile_java_file(folderpath):
 def compile_file(file, folderpath):
     try:
         proc = subprocess.Popen(
-            f"ulimit -S -v {2 * 1024 * 1024 * 1024}; cd {folderpath} && {os.path.join(get_java_bin_path(), 'javac')} "
+            f"ulimit -S -v {2 * 1024 * 1024 * 1024}; cd {folderpath} && /public/apps/java/jdk/1.8.0_131/bin/javac "
             + file,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -129,7 +128,7 @@ def create_tests(file, folderpath, report_name):
     print(file)
     doutput = "-Doutput_variables=configuration_id,TARGET_CLASS,criterion,Size,Length,MutationScore"
     cmd = (
-        f"{os.path.join(get_java_bin_path(), 'java')} -jar {EVOSUITE_JAR_PATH} -class "
+        f"/public/apps/java/jdk/1.8.0_131/bin/java -jar {EVOSUITE_JAR_PATH} -class "
         + file.replace(".class", "")
         + f" -projectCP . "
         f'-criterion "LINE:BRANCH:WEAKMUTATION:OUTPUT:METHOD:CBRANCH:STRONGMUTATION" '
