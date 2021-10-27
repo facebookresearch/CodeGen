@@ -174,7 +174,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--fastbpe_use_vocab",
-        type=bool,
+        type=bool_flag,
         default=False,
         help="Whether to use the vocab when applying BPE",
     )

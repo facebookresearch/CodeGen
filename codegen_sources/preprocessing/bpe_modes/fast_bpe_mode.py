@@ -90,7 +90,7 @@ class FastBPEMode(BPEMode):
         )
         assert (
             Path(output).is_file and process.returncode == 0
-        ), f"failed to apply bpe on {file}, command: \n {FAST} applybpe {output} {file} {self.codes} {vocab}"
+        ), f"failed to apply bpe on {file}, command: \n {FAST} applybpe {output} {file} {self.codes} {vocab if self.use_vocab else ''}"
 
     def repair_bpe_for_obfuscation_line(self, line: str):
         for prefix in OBFUSCATED_PREFIXES:
