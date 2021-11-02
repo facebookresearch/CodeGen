@@ -126,7 +126,7 @@ def check_model_params(params):
     ), "Eval temperature should be set if and only if taking several samples at eval time"
 
 
-def set_pretrain_emb(model, dico, word2id, embeddings):
+def set_pretrain_emb(model, dico, word2id, embeddings, gpu):
     """
     Pretrain word embeddings.
     """
@@ -137,8 +137,12 @@ def set_pretrain_emb(model, dico, word2id, embeddings):
             if idx is None:
                 continue
             n_found += 1
-            model.embeddings.weight[i] = embeddings[idx].cuda()
-            model.pred_layer.proj.weight[i] = embeddings[idx].cuda()
+            model.embeddings.weight[i] = (
+                embeddings[idx].cuda() if gpu else embeddings[idx]
+            )
+            model.pred_layer.proj.weight[i] = (
+                embeddings[idx].cuda() if gpu else embeddings[idx]
+            )
     logger.info(
         "Pretrained %i/%i words (%.3f%%)."
         % (n_found, len(dico), 100.0 * n_found / len(dico))
@@ -146,7 +150,7 @@ def set_pretrain_emb(model, dico, word2id, embeddings):
 
 
 @torch.no_grad()
-def build_model(params, dico):
+def build_model(params, dico, gpu=True):
     """
     Build model.
     """
@@ -157,13 +161,13 @@ def build_model(params, dico):
         # reload pretrained word embeddings
         if params.reload_emb != "":
             word2id, embeddings = load_embeddings(params.reload_emb, params)
-            set_pretrain_emb(model, dico, word2id, embeddings)
+            set_pretrain_emb(model, dico, word2id, embeddings, gpu)
 
         # reload a pretrained model
         if params.reload_model != "":
             logger.info("============ Model Reloading")
             logger.info("Reloading model from %s ..." % params.reload_model)
-            reload_transformer(params, params.reload_model, dico, model, "model")
+            reload_transformer(params, params.reload_model, dico, model, "model", gpu)
 
         logger.info("Model: {}".format(model))
         logger.info(
@@ -172,7 +176,7 @@ def build_model(params, dico):
         )
         logger.info("")
 
-        return [model.cuda()]
+        return [model.cuda() if gpu else model]
 
     else:
         # build
@@ -199,9 +203,9 @@ def build_model(params, dico):
         # reload pretrained word embeddings
         if params.reload_emb != "":
             word2id, embeddings = load_embeddings(params.reload_emb, params)
-            set_pretrain_emb(encoder, dico, word2id, embeddings)
+            set_pretrain_emb(encoder, dico, word2id, embeddings, gpu)
             for decoder in decoders:
-                set_pretrain_emb(decoder, dico, word2id, embeddings)
+                set_pretrain_emb(decoder, dico, word2id, embeddings, gpu)
 
         # reload a pretrained model
         if params.reload_model != "":
@@ -212,16 +216,16 @@ def build_model(params, dico):
             # reload encoder
             if enc_path != "":
                 logger.info("Reloading encoder from %s ..." % enc_path)
-                reload_transformer(params, enc_path, dico, encoder, "encoder")
+                reload_transformer(params, enc_path, dico, encoder, "encoder", gpu)
 
             # reload decoders
             if dec_path != "":
                 for dec in decoders:
                     logger.info("Reloading decoders from %s ..." % dec_path)
                     if params.reload_encoder_for_decoder:
-                        reload_transformer(params, dec_path, dico, dec, "encoder")
+                        reload_transformer(params, dec_path, dico, dec, "encoder", gpu)
                     else:
-                        reload_transformer(params, dec_path, dico, dec, "decoder")
+                        reload_transformer(params, dec_path, dico, dec, "decoder", gpu)
 
         logger.debug("Encoder: {}".format(encoder))
         logger.debug("Decoder: {}".format(decoders))
@@ -236,7 +240,10 @@ def build_model(params, dico):
         logger.info(f"Number of decoders: {len(decoders)}")
         logger.info("")
 
-        return [encoder.cuda()], [dec.cuda() for dec in decoders]
+        return (
+            [encoder.cuda() if gpu else encoder],
+            [dec.cuda() if gpu else dec for dec in decoders],
+        )
 
 
 @torch.no_grad()
@@ -270,7 +277,7 @@ def build_classifier(params):
     return [classifier.cuda()]
 
 
-def reload_transformer(params, path, dico, model, model_type):
+def reload_transformer(params, path, dico, model, model_type, gpu=True):
     """
     Reload a transformer state dict to current model:
     clean 'module.' from state dict,
@@ -281,7 +288,10 @@ def reload_transformer(params, path, dico, model, model_type):
     """
 
     reloaded = torch.load(
-        path, map_location=lambda storage, loc: storage.cuda(params.local_rank)
+        path,
+        map_location=lambda storage, loc: storage.cuda(params.local_rank)
+        if gpu
+        else storage.cpu(),
     )
     clean_model_state_dict(reloaded, model_type)
     reload_word_embeddings(reloaded, dico, model_type)
