@@ -59,7 +59,7 @@ All of these data should be contain in the same folder. The path is given as ```
 In our case we use NGPU=8
 
 #### Get Training Data
-First get raw data from google big Query ([see](GoogleBigQuery_README.md)).
+First get raw data from Google BigQuery ([see](googlebigquery.md)).
 
 Then run the following command to get the monolingual data for MLM:
 ```bash
