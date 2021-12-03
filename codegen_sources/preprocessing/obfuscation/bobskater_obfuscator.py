@@ -260,9 +260,16 @@ class ObfuscationTransformer(ast.NodeTransformer):
     """
 
     def __init__(
-        self, rootFrame, *args, removeDocstrings=True, obfuscateNames=True, **kwargs
+        self,
+        rootFrame,
+        *args,
+        removeDocstrings=True,
+        obfuscateNames=True,
+        debug=False,
+        **kwargs,
     ):
         self._logger = logging.getLogger(self.__class__.__name__)
+        self.debug = debug
         self._rootFrame = rootFrame
         self._nodeStack = []
         self._debugMsg = None
@@ -348,7 +355,10 @@ class ObfuscationTransformer(ast.NodeTransformer):
             kwStrs = list(
                 map(lambda n: n.arg, argumentsNode.args[-len(argumentsNode.defaults) :])
             )
-            self._logger.debug("kwarg debug %s %s %s", kwStrs, strId, strId in kwStrs)
+            if self.debug:
+                self._logger.debug(
+                    "kwarg debug %s %s %s", kwStrs, strId, strId in kwStrs
+                )
             if strId in kwStrs:
                 frameEntry.value = False
                 return False
@@ -415,7 +425,7 @@ class ObfuscationTransformer(ast.NodeTransformer):
         # Mangle names
         ids = getIdsFromNode(node)
         if self._opt.obfuscateNames:
-            if self._logger.isEnabledFor(logging.DEBUG):
+            if self.debug:
                 oldIds = ids[:]
             for idx, strId in enumerate(ids):
                 mangleTo = self.getMangledName(self._nodeStack, strId, node)
@@ -423,7 +433,7 @@ class ObfuscationTransformer(ast.NodeTransformer):
                     continue
                 ids[idx] = mangleTo
             setIdsOnNode(node, ids)
-            if ids and self._logger.isEnabledFor(logging.DEBUG):
+            if ids and self.debug:
                 self._logger.debug(
                     node.__class__.__name__
                     + ": "
@@ -431,7 +441,7 @@ class ObfuscationTransformer(ast.NodeTransformer):
                     + " => "
                     + (str(ids) if ids else None)
                     + " ["
-                    + self._debugMsg
+                    + str(self._debugMsg)
                     + "]"
                 )
                 self._debugMsg = ""
