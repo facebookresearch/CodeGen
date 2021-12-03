@@ -441,7 +441,7 @@ class ObfuscationTransformer(ast.NodeTransformer):
                     + " => "
                     + (str(ids) if ids else None)
                     + " ["
-                    + self._debugMsg
+                    + str(self._debugMsg)
                     + "]"
                 )
                 self._debugMsg = ""
