@@ -167,7 +167,7 @@ class Translator:
 
             # Convert source code to ids
             tokens = [t for t in tokenizer(input)]
-            print(f"Tokenized {params.src_lang} function:")
+            print(f"Tokenized {lang1} function:")
             print(tokens)
             tokens = self.bpe_model.apply_bpe(" ".join(tokens)).split()
             tokens = ["</s>"] + tokens + ["</s>"]
