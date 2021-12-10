@@ -17,6 +17,7 @@ from tqdm import tqdm
 import pandas as pd
 from utils import add_root_to_path
 
+
 add_root_to_path()
 
 from codegen_sources.model.src.utils import get_java_bin_path
@@ -37,6 +38,7 @@ assert (
 ), "EvoSuite Jar is missing, run wget https://github.com/EvoSuite/evosuite/releases/download/v1.1.0/evosuite-1.1.0.jar"
 
 MUTATION_SCORE_CUTOFF = 0.9
+MAX_JAVA_HEAP_mb = 3000
 
 REPORT_FILE = "statistics.csv"
 
@@ -132,13 +134,11 @@ def get_consolidated_report_path(folderpath):
 
 def create_tests(file, folderpath, report_name):
     print(file)
-    doutput = "-Doutput_variables=configuration_id,TARGET_CLASS,criterion,Size,Length,MutationScore"
     cmd = (
-        f"{os.path.join(get_java_bin_path(), 'java')} -jar {EVOSUITE_JAR_PATH} -class "
+        f"{os.path.join(get_java_bin_path(), 'java')} -Xmx{MAX_JAVA_HEAP_mb}m -jar {EVOSUITE_JAR_PATH} -class "
         + file.replace(".class", "")
         + f" -projectCP . "
         f'-criterion "LINE:BRANCH:WEAKMUTATION:OUTPUT:METHOD:CBRANCH:STRONGMUTATION" '
-        f"{doutput} "
         f" -Dshow_progress=false "
         f"-Dassertion_strategy=MUTATION "
         f"-Dminimize=true "
