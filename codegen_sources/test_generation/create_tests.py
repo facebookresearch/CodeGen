@@ -11,6 +11,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path, PosixPath
 
 import argparse
+
 from submitit import AutoExecutor, LocalExecutor
 from tqdm import tqdm
 import pandas as pd
@@ -18,6 +19,7 @@ from utils import add_root_to_path
 
 add_root_to_path()
 
+from codegen_sources.model.src.utils import get_java_bin_path
 from codegen_sources.preprocessing.lang_processors.tree_sitter_processor import (
     TREE_SITTER_ROOT,
 )
@@ -85,14 +87,14 @@ def run_command_compile_java_file(folderpath):
 def compile_file(file, folderpath):
     try:
         proc = subprocess.Popen(
-            f"ulimit -S -v {2 * 1024 * 1024 * 1024}; cd {folderpath} && /public/apps/java/jdk/1.8.0_131/bin/javac "
+            f"ulimit -S -v {2 * 1024 * 1024 * 1024}; cd {folderpath} && {os.path.join(get_java_bin_path(), 'javac')} "
             + file,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=True,
             executable="/bin/bash",
         )
-        out, err = proc.communicate(timeout=60)
+        out, err = proc.communicate(timeout=180)
     except subprocess.TimeoutExpired:
         return
 
@@ -113,7 +115,11 @@ def run_command_test_generation(folderpath):
         report_dirs.append(report_name)
         jobs.append(executor.submit(create_tests, file, folderpath, report_name))
 
-    [j.result() for j in jobs]
+    job_res = [j.result() for j in jobs]
+    print(
+        f"Percentage of timeouts: {len([j for j in job_res if j == 'timeout'])/len(job_res):.2%}"
+    )
+
     consolidated_report_path = get_consolidated_report_path(folderpath)
     consolidated_report_path.mkdir(exist_ok=True)
     consolidated_report_path = consolidated_report_path.joinpath(REPORT_FILE)
@@ -128,7 +134,7 @@ def create_tests(file, folderpath, report_name):
     print(file)
     doutput = "-Doutput_variables=configuration_id,TARGET_CLASS,criterion,Size,Length,MutationScore"
     cmd = (
-        f"/public/apps/java/jdk/1.8.0_131/bin/java -jar {EVOSUITE_JAR_PATH} -class "
+        f"{os.path.join(get_java_bin_path(), 'java')} -jar {EVOSUITE_JAR_PATH} -class "
         + file.replace(".class", "")
         + f" -projectCP . "
         f'-criterion "LINE:BRANCH:WEAKMUTATION:OUTPUT:METHOD:CBRANCH:STRONGMUTATION" '
@@ -140,14 +146,14 @@ def create_tests(file, folderpath, report_name):
         f"-Ddouble_precision=0.0001 "
         f"-Dmax_mutants_per_test 200 "
         f'-Danalysis_criteria="LINE,BRANCH,EXCEPTION,WEAKMUTATION,OUTPUT,METHOD,METHODNOEXCEPTION,CBRANCH,STRONGMUTATION" '
-        f"-Doutput_variables=TARGET_CLASS,Random_Seed,criterion,Size,HadUnstableTests,Length,Total_Branches,Covered_Branches,BranchCoverage,Lines,Coverage,Covered_Lines,LineCoverage,MethodCoverage,Size,Length,Total_Goals,Covered_Goals,MutationScore,OutputCoverage "
+        f"-Doutput_variables=TARGET_CLASS,Random_Seed,criterion,Size,Length,BranchCoverage,Lines,Coverage,Covered_Lines,LineCoverage,MethodCoverage,Size,Length,Total_Goals,Covered_Goals,MutationScore,OutputCoverage "
         f"-Dmax_int {int(math.sqrt(2 ** 31 - 1))} "
         f"-Dreport_dir={report_name}"
     )
     print(cmd)
     try:
         return subprocess.call(
-            cmd, shell=True, timeout=1000, cwd=folderpath, executable="/bin/bash"
+            cmd, shell=True, timeout=1500, cwd=folderpath, executable="/bin/bash"
         )
     except subprocess.TimeoutExpired:
         return "timeout"
@@ -155,12 +161,16 @@ def create_tests(file, folderpath, report_name):
 
 def consolidate_reports(consolidated_report_path, report_dirs, folderpath):
     with open(consolidated_report_path, "w") as output_report:
-        for i, report_dir in enumerate(report_dirs):
+        header_printed = False
+        for report_dir in report_dirs:
             report_path = Path(folderpath).joinpath(report_dir).joinpath(REPORT_FILE)
             if report_path.is_file():
                 with open(report_path, "r") as f:
                     report_lines = f.readlines()
-                output_report.writelines(report_lines if i == 0 else report_lines[1:])
+                output_report.writelines(
+                    report_lines if not header_printed else report_lines[1:]
+                )
+                header_printed = True
                 report_path.unlink()
                 report_path.parent.rmdir()
 
@@ -191,7 +201,7 @@ def output_selected_tests_summary(tests_path):
             csv_dfs.append(csv)
 
     concat_df = pd.concat(csv_dfs).reset_index(drop=True)
-
+    concat_df = concat_df[concat_df["TARGET_CLASS"].apply(lambda x: not pd.isna(x))]
     concat_df["path_to_test"] = concat_df.apply(
         lambda row: row["folder"]
         .joinpath("evosuite-tests")
@@ -199,6 +209,11 @@ def output_selected_tests_summary(tests_path):
         axis="columns",
     )
 
+    test_exists = concat_df["path_to_test"].apply(lambda x: x.is_file())
+    print(
+        f"{(~test_exists).sum() / len(test_exists):.2%} of the tests in the summary could not be found"
+    )
+    concat_df = concat_df[test_exists]
     concat_df.to_csv(tests_path.joinpath("tests_summary.csv"), index=False)
     test_string = []
     for p in concat_df.path_to_test:

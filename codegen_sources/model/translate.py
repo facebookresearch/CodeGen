@@ -124,7 +124,7 @@ class Translator:
 
     def translate(
         self,
-        input,
+        input_code,
         lang1,
         lang2,
         suffix1="_sa",
@@ -133,14 +133,16 @@ class Translator:
         beam_size=1,
         sample_temperature=None,
         device="cuda:0",
+        tokenized=False,
         detokenize=True,
         max_tokens=None,
         length_penalty=0.5,
+        max_len=None,
     ):
 
         # Build language processors
-        assert lang1 in {"python", "java", "cpp"}, lang1
-        assert lang2 in {"python", "java", "cpp"}, lang2
+        assert lang1 in SUPPORTED_LANGUAGES, lang1
+        assert lang2 in SUPPORTED_LANGUAGES, lang2
         src_lang_processor = LangProcessor.processors[lang1](
             root_folder=TREE_SITTER_ROOT
         )
@@ -166,24 +168,27 @@ class Translator:
             lang2_id = self.reloaded_params.lang2id[lang2]
 
             # Convert source code to ids
-            tokens = [t for t in tokenizer(input)]
+            if tokenized:
+                tokens = input_code.strip().split()
+            else:
+                tokens = [t for t in tokenizer(input_code)]
             print(f"Tokenized {lang1} function:")
             print(tokens)
             tokens = self.bpe_model.apply_bpe(" ".join(tokens)).split()
             tokens = ["</s>"] + tokens + ["</s>"]
-            input = " ".join(tokens)
-            if max_tokens is not None and len(input.split()) > max_tokens:
+            input_code = " ".join(tokens)
+            if max_tokens is not None and len(input_code.split()) > max_tokens:
                 logger.info(
-                    f"Ignoring long input sentence of size {len(input.split())}"
+                    f"Ignoring long input sentence of size {len(input_code.split())}"
                 )
-                return [f"Error: input too long: {len(input.split())}"] * max(
+                return [f"Error: input too long: {len(input_code.split())}"] * max(
                     n, beam_size
                 )
 
             # Create torch batch
-            len1 = len(input.split())
+            len1 = len(input_code.split())
             len1 = torch.LongTensor(1).fill_(len1).to(device)
-            x1 = torch.LongTensor([self.dico.index(w) for w in input.split()]).to(
+            x1 = torch.LongTensor([self.dico.index(w) for w in input_code.split()]).to(
                 device
             )[:, None]
             langs1 = x1.clone().fill_(lang1_id)
@@ -196,7 +201,10 @@ class Translator:
                 len1 = len1.expand(n)
 
             # Decode
-            max_len = self.reloaded_params.max_len
+            if max_len is None:
+                max_len = int(
+                    min(self.reloaded_params.max_len, 3 * len1.max().item() + 10)
+                )
             if beam_size == 1:
                 x2, len2 = self.decoder.generate(
                     enc1,
@@ -244,7 +252,7 @@ if __name__ == "__main__":
     ), f"The path to the model checkpoint is incorrect: {params.model_path}"
     assert params.input is None or os.path.isfile(
         params.input
-    ), f"The path to the model checkpoint is incorrect: {params.input}"
+    ), f"The path to the input file is incorrect: {params.input}"
     assert os.path.isfile(
         params.BPE_path
     ), f"The path to the BPE tokens is incorrect: {params.BPE_path}"
