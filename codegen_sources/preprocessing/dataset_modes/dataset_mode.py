@@ -290,7 +290,7 @@ class DatasetMode(Generic[T]):
                 logger.warning(
                     f"Tokenization of {input_path}:"
                     f"{number_timeouts} timeouts out of {number_lines} lines"
-                    f"({number_errors / number_lines:.2%})"
+                    f"({number_timeouts / number_lines:.2%})"
                 )
 
             if filtered_examples > 0:
