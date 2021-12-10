@@ -126,7 +126,9 @@ def main(args):
         output_folder_translations.joinpath(f"{args.target_language}_chunk_{i}.csv")
         for i in range(len(chunks))
     ]
-    assert len(chunks) > 0, f"No chunks created from {args.csv_path } and {args.functions_path}"
+    assert (
+        len(chunks) > 0
+    ), f"No chunks created from {args.csv_path } and {args.functions_path}"
     logger.info(f"{len(chunks)} chunks of size {CHUNKSIZE}")
     missing_output_files = output_files
     if not args.rerun:
