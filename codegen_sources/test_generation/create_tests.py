@@ -135,7 +135,7 @@ def get_consolidated_report_path(folderpath):
 def create_tests(file, folderpath, report_name):
     print(file)
     cmd = (
-        f"{os.path.join(get_java_bin_path(), 'java')} -Xmx{MAX_JAVA_HEAP_mb}m -jar {EVOSUITE_JAR_PATH} -class "
+        f"{os.path.join(get_java_bin_path(), 'java')} -jar {EVOSUITE_JAR_PATH} -class "
         + file.replace(".class", "")
         + f" -projectCP . "
         f'-criterion "LINE:BRANCH:WEAKMUTATION:OUTPUT:METHOD:CBRANCH:STRONGMUTATION" '
@@ -148,6 +148,8 @@ def create_tests(file, folderpath, report_name):
         f'-Danalysis_criteria="LINE,BRANCH,EXCEPTION,WEAKMUTATION,OUTPUT,METHOD,METHODNOEXCEPTION,CBRANCH,STRONGMUTATION" '
         f"-Doutput_variables=TARGET_CLASS,Random_Seed,criterion,Size,Length,BranchCoverage,Lines,Coverage,Covered_Lines,LineCoverage,MethodCoverage,Size,Length,Total_Goals,Covered_Goals,MutationScore,OutputCoverage "
         f"-Dmax_int {int(math.sqrt(2 ** 31 - 1))} "
+        f"-mem=4096 "
+        f"-Dextra_timeout=180"
         f"-Dreport_dir={report_name}"
     )
     print(cmd)
@@ -259,9 +261,9 @@ if __name__ == "__main__":
     if args.local is False:
         cluster = AutoExecutor(output_path.joinpath("log"))
         cluster.update_parameters(cpus_per_task=80, mem_gb=300)
+        cluster.update_parameters(timeout_min=4000)
     else:
-        cluster = LocalExecutor(output_path.joinpath("log"))
-    cluster.update_parameters(timeout_min=4000)
+        cluster = None
 
     input_path = Path(args.input_path)
     if input_path.is_file():
@@ -287,9 +289,14 @@ if __name__ == "__main__":
         )
         infiles = np.array(infiles)[indices_to_run]
         sub_out_folders = np.array(sub_out_folders)[indices_to_run]
-    jobs = cluster.map_array(generate_tests_pipeline, infiles, sub_out_folders)
-    for j in tqdm(jobs):
-        j.result()
+    if args.local:
+        # Running everything locally in parallel can use too much memory
+        for file, out_path in tqdm(list(zip(infiles, sub_out_folders))):
+            generate_tests_pipeline(file, out_path)
+    else:
+        jobs = cluster.map_array(generate_tests_pipeline, infiles, sub_out_folders)
+        for j in tqdm(jobs):
+            j.result()
 
     output_selected_tests_summary(out_folder)
     print("\n" * 2)

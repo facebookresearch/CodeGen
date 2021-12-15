@@ -150,9 +150,9 @@ if __name__ == "__main__":
     if args.local is False:
         cluster = AutoExecutor(output_path.joinpath("log"))
         cluster.update_parameters(cpus_per_task=80, mem_gb=300)
+        cluster.update_parameters(timeout_min=40)
     else:
-        cluster = LocalExecutor(output_path.joinpath("log"))
-    cluster.update_parameters(timeout_min=40)
+        cluster = None
     tok_files_names = "java.[0-9]*.sa.tok"
     tok_files = sorted(list(input_path.glob(tok_files_names)))
     if not args.rerun:
@@ -161,9 +161,15 @@ if __name__ == "__main__":
             for f_path in tok_files
             if not (output_path.joinpath(f_path.name).is_file())
         ]
-    jobs = cluster.map_array(select_functions_for_file, tok_files, repeat(output_path))
-    for j in tqdm(jobs):
-        j.result()
+    if cluster is None:
+        for f in tqdm(tok_files):
+            select_functions_for_file(f, output_path)
+    else:
+        jobs = cluster.map_array(
+            select_functions_for_file, tok_files, repeat(output_path)
+        )
+        for j in tqdm(jobs):
+            j.result()
 
     selected_files = sorted(list(output_path.glob(tok_files_names)))
 

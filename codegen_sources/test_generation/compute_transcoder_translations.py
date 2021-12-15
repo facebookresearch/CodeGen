@@ -118,8 +118,7 @@ def main(args):
         )
     else:
         logger.info("Executing locally")
-        cluster = LocalExecutor(output_folder_translations.joinpath("log"))
-        cluster.update_parameters(timeout_min=4319,)
+        cluster = None
     merged_df = get_joined_func_tests_df(args.csv_path, args.functions_path)
     chunks = list(chunks_df(merged_df, CHUNKSIZE))
     output_files = [
@@ -141,17 +140,28 @@ def main(args):
         missing_output_files = [output_files[i] for i in indices_to_run]
     assert len(chunks) == len(missing_output_files)
     if len(chunks) > 0:
-        jobs = cluster.map_array(
-            compute_transcoder_translation,
-            chunks,
-            missing_output_files,
-            repeat(args.model_path),
-            repeat(args.bpe_path),
-            repeat(args.target_language),
-            repeat(args.len_penalty),
-        )
-        for j in tqdm(jobs):
-            j.result()
+        if cluster is None:
+            for c, output_f in zip(chunks, missing_output_files):
+                compute_transcoder_translation(
+                    c,
+                    output_f,
+                    args.model_path,
+                    args.bpe_path,
+                    args.target_language,
+                    args.len_penalty,
+                )
+        else:
+            jobs = cluster.map_array(
+                compute_transcoder_translation,
+                chunks,
+                missing_output_files,
+                repeat(args.model_path),
+                repeat(args.bpe_path),
+                repeat(args.target_language),
+                repeat(args.len_penalty),
+            )
+            for j in tqdm(jobs):
+                j.result()
     chunks_files = [
         output_folder_translations.joinpath(f"{args.target_language}_chunk_{i}.csv")
         for i in range(len(output_files))
