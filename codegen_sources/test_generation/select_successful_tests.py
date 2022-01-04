@@ -184,7 +184,6 @@ def get_first_success(test_results, language):
     min_successful_len = float("inf")
     for translations_i, result_i in zip(translations, tests_results):
         any_successful = False
-        translations_i = sorted(translations_i, key=lambda x: len(x))
         for translated_code, res in zip(translations_i, result_i):
             if res[0] == "success":
                 if not any_successful:
