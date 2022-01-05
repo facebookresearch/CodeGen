@@ -147,6 +147,7 @@ if __name__ == "__main__":
     input_path = Path(args.input_path)
     assert input_path.is_dir()
     output_path = Path(args.output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
     if args.local is False:
         cluster = AutoExecutor(output_path.joinpath("log"))
         cluster.update_parameters(cpus_per_task=80, mem_gb=300)

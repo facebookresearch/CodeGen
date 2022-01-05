@@ -149,7 +149,7 @@ def create_tests(file, folderpath, report_name):
         f"-Doutput_variables=TARGET_CLASS,Random_Seed,criterion,Size,Length,BranchCoverage,Lines,Coverage,Covered_Lines,LineCoverage,MethodCoverage,Size,Length,Total_Goals,Covered_Goals,MutationScore,OutputCoverage "
         f"-Dmax_int {int(math.sqrt(2 ** 31 - 1))} "
         f"-mem=4096 "
-        f"-Dextra_timeout=180"
+        f"-Dextra_timeout=180 "
         f"-Dreport_dir={report_name}"
     )
     print(cmd)
