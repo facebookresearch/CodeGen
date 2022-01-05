@@ -69,7 +69,13 @@ def get_joined_func_tests_df(csv_path, functions_path):
 
 
 def compute_transcoder_translation(
-    df, output_file, model_path, bpe_path, target_language, beam_size=20
+    df,
+    output_file,
+    model_path,
+    bpe_path,
+    target_language,
+    len_penalty=1.0,
+    beam_size=20,
 ):
     transcoder = Translator(model_path, bpe_path)
     res = [[] for _ in range(beam_size)]
@@ -81,9 +87,10 @@ def compute_transcoder_translation(
             "java",
             target_language,
             beam_size=beam_size,
+            tokenized=True,
             detokenize=False,
             max_tokens=1024,
-            length_penalty=0.5,
+            length_penalty=len_penalty,
         )
         for i, res_i in enumerate(translations):
             res[i].append(res_i)
@@ -111,15 +118,17 @@ def main(args):
         )
     else:
         logger.info("Executing locally")
-        cluster = LocalExecutor(output_folder_translations.joinpath("log"))
-        cluster.update_parameters(timeout_min=4319,)
+        cluster = None
     merged_df = get_joined_func_tests_df(args.csv_path, args.functions_path)
     chunks = list(chunks_df(merged_df, CHUNKSIZE))
     output_files = [
         output_folder_translations.joinpath(f"{args.target_language}_chunk_{i}.csv")
         for i in range(len(chunks))
     ]
-    logger.info(f"{len(chunks)} chunks of size {len(chunks[0])}")
+    assert (
+        len(chunks) > 0
+    ), f"No chunks created from {args.csv_path } and {args.functions_path}"
+    logger.info(f"{len(chunks)} chunks of size {CHUNKSIZE}")
     missing_output_files = output_files
     if not args.rerun:
         indices_to_run = [i for i, p in enumerate(output_files) if not (p.is_file())]
@@ -131,16 +140,28 @@ def main(args):
         missing_output_files = [output_files[i] for i in indices_to_run]
     assert len(chunks) == len(missing_output_files)
     if len(chunks) > 0:
-        jobs = cluster.map_array(
-            compute_transcoder_translation,
-            chunks,
-            missing_output_files,
-            repeat(args.model_path),
-            repeat(args.bpe_path),
-            repeat(args.target_language),
-        )
-        for j in tqdm(jobs):
-            j.result()
+        if cluster is None:
+            for c, output_f in zip(chunks, missing_output_files):
+                compute_transcoder_translation(
+                    c,
+                    output_f,
+                    args.model_path,
+                    args.bpe_path,
+                    args.target_language,
+                    args.len_penalty,
+                )
+        else:
+            jobs = cluster.map_array(
+                compute_transcoder_translation,
+                chunks,
+                missing_output_files,
+                repeat(args.model_path),
+                repeat(args.bpe_path),
+                repeat(args.target_language),
+                repeat(args.len_penalty),
+            )
+            for j in tqdm(jobs):
+                j.result()
     chunks_files = [
         output_folder_translations.joinpath(f"{args.target_language}_chunk_{i}.csv")
         for i in range(len(output_files))
@@ -179,6 +200,9 @@ def parse_arguments():
     )
     parser.add_argument(
         "--bpe_path", type=str, help="where the files should be outputted",
+    )
+    parser.add_argument(
+        "--len_penalty", type=float, help="Length penalty for generations", default=0.5,
     )
     parser.add_argument(
         "--local",

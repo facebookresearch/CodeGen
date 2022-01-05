@@ -149,9 +149,9 @@ def compute_test_results(
         cluster.update_parameters(
             cpus_per_task=40, mem_gb=300, partition="learnlab",
         )
+        cluster.update_parameters(timeout_min=500)
     else:
-        cluster = LocalExecutor(output_folder.joinpath("log"))
-    cluster.update_parameters(timeout_min=500)
+        cluster = None
     tests_chunks = list(chunks(translated_tests, CHUNKSIZE_TEST_RESULTS))
     func_chuncs = list(chunks(translated_functions, CHUNKSIZE_TEST_RESULTS))
     logger.info(f"{len(tests_chunks)} chunks of size {len(tests_chunks[0])}")
@@ -172,15 +172,19 @@ def compute_test_results(
         func_chuncs = [func_chuncs[i] for i in indices_to_run]
         missing_output_files = [chunk_output_paths[i] for i in indices_to_run]
 
-    jobs = cluster.map_array(
-        compute_all_tests_results,
-        tests_chunks,
-        func_chuncs,
-        repeat(test_runner),
-        missing_output_files,
-    )
-    for j in tqdm(jobs):
-        _ = j.result()
+    if cluster is None:
+        for tc, fc, output in zip(tests_chunks, func_chuncs, missing_output_files):
+            compute_all_tests_results(tc, fc, test_runner, output)
+    else:
+        jobs = cluster.map_array(
+            compute_all_tests_results,
+            tests_chunks,
+            func_chuncs,
+            repeat(test_runner),
+            missing_output_files,
+        )
+        for j in tqdm(jobs):
+            _ = j.result()
 
     results = []
     for p in chunk_output_paths:
