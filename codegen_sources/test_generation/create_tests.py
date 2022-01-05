@@ -38,7 +38,7 @@ assert (
 ), "EvoSuite Jar is missing, run wget https://github.com/EvoSuite/evosuite/releases/download/v1.1.0/evosuite-1.1.0.jar"
 
 MUTATION_SCORE_CUTOFF = 0.9
-MAX_JAVA_HEAP_mb = 3000
+MAX_JAVA_MEM = 4096
 
 REPORT_FILE = "statistics.csv"
 
@@ -148,7 +148,7 @@ def create_tests(file, folderpath, report_name):
         f'-Danalysis_criteria="LINE,BRANCH,EXCEPTION,WEAKMUTATION,OUTPUT,METHOD,METHODNOEXCEPTION,CBRANCH,STRONGMUTATION" '
         f"-Doutput_variables=TARGET_CLASS,Random_Seed,criterion,Size,Length,BranchCoverage,Lines,Coverage,Covered_Lines,LineCoverage,MethodCoverage,Size,Length,Total_Goals,Covered_Goals,MutationScore,OutputCoverage "
         f"-Dmax_int {int(math.sqrt(2 ** 31 - 1))} "
-        f"-mem=4096 "
+        f"-mem={MAX_JAVA_MEM} "
         f"-Dextra_timeout=180 "
         f"-Dreport_dir={report_name}"
     )
