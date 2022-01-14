@@ -40,7 +40,13 @@ class JavaProcessor(TreeSitterLangProcessor):
     def __init__(self, root_folder):
         super().__init__(
             language="java",
-            ast_nodes_type_string=["comment", "string_literal", "character_literal"],
+            ast_nodes_type_string=[
+                "comment",
+                "block_comment",
+                "line_comment",
+                "string_literal",
+                "character_literal",
+            ],
             stokens_to_chars=JAVA_TOKEN2CHAR,
             chars_to_stokens=JAVA_CHAR2TOKEN,
             root_folder=root_folder,
