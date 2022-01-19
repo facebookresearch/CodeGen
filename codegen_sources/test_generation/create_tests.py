@@ -39,6 +39,7 @@ assert (
 
 MUTATION_SCORE_CUTOFF = 0.9
 MAX_JAVA_MEM = 4096
+CPUS_PER_TASK=80
 
 REPORT_FILE = "statistics.csv"
 
@@ -79,7 +80,7 @@ import javafx.util.Pair;\n
 def run_command_compile_java_file(folderpath):
     print(f"compiling files in {folderpath}")
     files = os.listdir(folderpath)
-    executor = ThreadPoolExecutor()
+    executor = ThreadPoolExecutor(max_workers=CPUS_PER_TASK)
     jobs = []
     for file in files:
         jobs.append(executor.submit(compile_file, file, folderpath))
@@ -107,7 +108,7 @@ def compile_file(file, folderpath):
 
 def run_command_test_generation(folderpath):
     print(f"Generating tests in {folderpath}")
-    executor = ThreadPoolExecutor()
+    executor = ThreadPoolExecutor(max_workers=CPUS_PER_TASK)
 
     files = os.listdir(folderpath)
     jobs = []
@@ -260,7 +261,7 @@ if __name__ == "__main__":
     output_path.mkdir(exist_ok=True)
     if args.local is False:
         cluster = AutoExecutor(output_path.joinpath("log"))
-        cluster.update_parameters(cpus_per_task=80, mem_gb=300)
+        cluster.update_parameters(cpus_per_task=CPUS_PER_TASK, mem_gb=300)
         cluster.update_parameters(timeout_min=4000)
     else:
         cluster = None
