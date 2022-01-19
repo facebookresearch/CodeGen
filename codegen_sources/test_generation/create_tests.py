@@ -39,7 +39,7 @@ assert (
 
 MUTATION_SCORE_CUTOFF = 0.9
 MAX_JAVA_MEM = 4096
-CPUS_PER_TASK=80
+CPUS_PER_TASK=multiprocessing.cpu_count()
 
 REPORT_FILE = "statistics.csv"
 
