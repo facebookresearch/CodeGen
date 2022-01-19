@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 import math
+import multiprocessing
 import os
 import subprocess
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -39,7 +40,7 @@ assert (
 
 MUTATION_SCORE_CUTOFF = 0.9
 MAX_JAVA_MEM = 4096
-CPUS_PER_TASK=multiprocessing.cpu_count()
+CPUS_PER_TASK = 80
 
 REPORT_FILE = "statistics.csv"
 
@@ -80,7 +81,7 @@ import javafx.util.Pair;\n
 def run_command_compile_java_file(folderpath):
     print(f"compiling files in {folderpath}")
     files = os.listdir(folderpath)
-    executor = ThreadPoolExecutor(max_workers=CPUS_PER_TASK)
+    executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
     jobs = []
     for file in files:
         jobs.append(executor.submit(compile_file, file, folderpath))
@@ -108,7 +109,7 @@ def compile_file(file, folderpath):
 
 def run_command_test_generation(folderpath):
     print(f"Generating tests in {folderpath}")
-    executor = ThreadPoolExecutor(max_workers=CPUS_PER_TASK)
+    executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
 
     files = os.listdir(folderpath)
     jobs = []
