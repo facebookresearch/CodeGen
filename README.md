@@ -130,7 +130,7 @@ To have details on how to retrain specific models, please refer to the README sp
 
 ```
 @article{roziere2021dobf,
-  title={DOBF: A Deobfuscation Pre-Training Objective for Programming Languages},
+  title={{DOBF}: A Deobfuscation Pre-Training Objective for Programming Languages},
   author={Roziere, Baptiste and Lachaux, Marie-Anne and Szafraniec, Marc and Lample, Guillaume},
   journal={arXiv preprint arXiv:2102.07492},
   year={2021}
