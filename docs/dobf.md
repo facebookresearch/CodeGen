@@ -46,7 +46,7 @@ To get the obfuscation data for DOBF:
 ```
 python -m codegen_sources.preprocessing.preprocess 
 <DATASET_PATH>                                                          # folder containing raw data i.e json.gz
---langs cpp java python                                                 # languages to prepocess
+--langs java python                                                 # languages to prepocess
 --mode obfuscation                                                      # dataset mode
 --local True                                                            # Run on your local machine if True. If False run on a cluster (requires submitit setup)
 --bpe_mode fast_bpe
