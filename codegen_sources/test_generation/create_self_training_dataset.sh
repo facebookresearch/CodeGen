@@ -17,7 +17,7 @@ REPO_ROOT="."
 echo "Repository root: $REPO_ROOT"
 
 SELECTED_FUNCS_ROOT="${ST_OUTPUT_ROOT_DIR}/selected_functions/"
-SELECTED_FUNCS="/checkpoint/broz/data/2021-04-19_selected_sa_java_functions_for_tests_deduped"
+SELECTED_FUNCS="${SELECTED_FUNCS_ROOT}/deduped/"
 TESTS_PATHS="${ST_OUTPUT_ROOT_DIR}/tests/"
 TRANSLATIONS_AND_RESULTS_PATH="${ST_OUTPUT_ROOT_DIR}/results/"
 TESTS_RESULTS="${TRANSLATIONS_AND_RESULTS_PATH}test_results/"
