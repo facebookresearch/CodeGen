@@ -5,135 +5,128 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from codegen_sources.preprocessing.preprocess import preprocess
-from pathlib import Path
 import os
+import logging
 import shutil
+import unittest
+from pathlib import Path
+
+import pytest
+
+
+from codegen_sources.preprocessing.preprocess import preprocess
 
 input_path = Path(__file__).parents[4].joinpath("data/test_dataset")
 bpe_path = Path(__file__).parents[4].joinpath("data/bpe/cpp-java-python")
+logger = logging.getLogger(__name__)
 
 
 class AttrDict(dict):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
 
 
+def _deactivate_in_ci() -> None:
+    """Diminish number of used processors in the CI since it triggers
+    memory errors (with Roberta mode)
+    """
+    if os.environ.get("CIRCLECI", False):
+        # might be related to downloading the model, and/or to load in multiple
+        # processes
+        raise unittest.SkipTest("Roberta is deactivated because of OOM in the CI")
+
+
+DEFAULT_PARAMETERS = AttrDict(
+    {
+        "input_path": str(input_path),
+        "local": "True",
+        "train_splits": 1,
+        "ncodes": 100,
+        "percent_test_valid": 10,
+        "keep_comments": False,
+        "local_parallelism": None,
+        "tokenization_timeout": 2,
+        "bpe_timeout": 2,
+        "train_bpe_timeout": 5,
+        "repo_split": True,
+    }
+)
+
+
+@pytest.fixture(autouse=True)
+def setup(tmpdir):
+    if (input_path / "log").is_dir():
+        shutil.rmtree(input_path.joinpath("log"))
+    for f in input_path.glob("*"):
+        if not f.name.endswith(".json.gz"):
+            f.unlink()
+
+
 # Roberta Mode
 def test_obfuscation_roberta_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
-        {
-            "input_path": str(input_path),
-            "langs": ["java", "python"],
-            "mode": "obfuscation",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
-            "bpe_mode": "roberta",
-            "keep_comments": False,
-            "local_parallelism": None,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
-        }
+        {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta",}
     )
+    _deactivate_in_ci()
     preprocess(args)
     shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 def test_obfuscation_functions_roberta_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python"],
             "mode": "obfuscation_functions",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "roberta",
-            "keep_comments": False,
-            "local_parallelism": None,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
+    _deactivate_in_ci()
     preprocess(args)
     shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 def test_monolingual_roberta_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python", "cpp"],
             "mode": "monolingual",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "roberta",
-            "keep_comments": False,
-            "local_parallelism": None,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
+    _deactivate_in_ci()
     preprocess(args)
     shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 def test_monolingual_functions_roberta_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python", "cpp"],
             "mode": "monolingual_functions",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "roberta",
-            "keep_comments": False,
-            "local_parallelism": None,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
+    _deactivate_in_ci()
     preprocess(args)
     shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 # Fast BPE Mode
 def test_monolingual_fast_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python", "cpp"],
             "mode": "monolingual",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "fast",
-            "keep_comments": False,
-            "local_parallelism": None,
             "fastbpe_code_path": None,
             "fastbpe_vocab_path": None,
             "fastbpe_use_vocab": False,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
     preprocess(args)
@@ -141,25 +134,15 @@ def test_monolingual_fast_pipeline():
 
 
 def test_monolingual_functions_fast_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python", "cpp"],
             "mode": "monolingual_functions",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "fast",
-            "keep_comments": False,
-            "local_parallelism": None,
             "fastbpe_code_path": None,
             "fastbpe_vocab_path": None,
             "fastbpe_use_vocab": False,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
     preprocess(args)
@@ -167,25 +150,16 @@ def test_monolingual_functions_fast_pipeline():
 
 
 def test_monolingual_functions_fast_pipeline_keep_comments():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python", "cpp"],
             "mode": "monolingual_functions",
-            "local": "True",
-            "train_splits": 1,
-            "ncodes": 100,
-            "percent_test_valid": 10,
             "bpe_mode": "fast",
             "keep_comments": True,
-            "local_parallelism": None,
             "fastbpe_code_path": None,
             "fastbpe_vocab_path": None,
             "fastbpe_use_vocab": False,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
     preprocess(args)
@@ -193,25 +167,16 @@ def test_monolingual_functions_fast_pipeline_keep_comments():
 
 
 def test_obfuscation_fast_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python"],
             "mode": "obfuscation",
-            "local": "True",
-            "train_splits": 1,
-            "percent_test_valid": 10,
             "bpe_mode": "fast",
-            "keep_comments": False,
-            "local_parallelism": None,
             "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
             "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
             "fastbpe_use_vocab": False,
             "ncodes": 50000,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
     preprocess(args)
@@ -219,25 +184,16 @@ def test_obfuscation_fast_pipeline():
 
 
 def test_obfuscation_functions_fast_pipeline():
-    args = AttrDict()
+    args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
-            "input_path": str(input_path),
             "langs": ["java", "python"],
             "mode": "obfuscation_functions",
-            "local": "True",
-            "train_splits": 1,
-            "percent_test_valid": 10,
             "bpe_mode": "fast",
-            "keep_comments": False,
-            "local_parallelism": None,
             "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
             "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
             "fastbpe_use_vocab": False,
             "ncodes": 50000,
-            "tokenization_timeout": 2,
-            "bpe_timeout": 2,
-            "train_bpe_timeout": 5,
         }
     )
     preprocess(args)
