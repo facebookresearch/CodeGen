@@ -63,124 +63,124 @@ def setup(tmpdir):
             f.unlink()
 
 
-# # Roberta Mode
-# def test_obfuscation_roberta_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta",}
-#     )
-#     _deactivate_in_ci()
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_obfuscation_functions_roberta_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python"],
-#             "mode": "obfuscation_functions",
-#             "bpe_mode": "roberta",
-#         }
-#     )
-#     _deactivate_in_ci()
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_monolingual_roberta_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python", "cpp"],
-#             "mode": "monolingual",
-#             "bpe_mode": "roberta",
-#         }
-#     )
-#     _deactivate_in_ci()
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_monolingual_functions_roberta_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python", "cpp"],
-#             "mode": "monolingual_functions",
-#             "bpe_mode": "roberta",
-#         }
-#     )
-#     _deactivate_in_ci()
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# # Fast BPE Mode
-# def test_monolingual_fast_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python", "cpp"],
-#             "mode": "monolingual",
-#             "bpe_mode": "fast",
-#             "fastbpe_code_path": None,
-#             "fastbpe_vocab_path": None,
-#             "fastbpe_use_vocab": False,
-#         }
-#     )
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_monolingual_functions_fast_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python", "cpp"],
-#             "mode": "monolingual_functions",
-#             "bpe_mode": "fast",
-#             "fastbpe_code_path": None,
-#             "fastbpe_vocab_path": None,
-#             "fastbpe_use_vocab": False,
-#         }
-#     )
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_monolingual_functions_fast_pipeline_keep_comments():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python", "cpp"],
-#             "mode": "monolingual_functions",
-#             "bpe_mode": "fast",
-#             "keep_comments": True,
-#             "fastbpe_code_path": None,
-#             "fastbpe_vocab_path": None,
-#             "fastbpe_use_vocab": False,
-#         }
-#     )
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
-#
-#
-# def test_obfuscation_fast_pipeline():
-#     args = AttrDict(DEFAULT_PARAMETERS)
-#     args.update(
-#         {
-#             "langs": ["java", "python"],
-#             "mode": "obfuscation",
-#             "bpe_mode": "fast",
-#             "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
-#             "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
-#             "fastbpe_use_vocab": False,
-#             "ncodes": 50000,
-#         }
-#     )
-#     preprocess(args)
-#     shutil.rmtree(input_path.joinpath("XLM-syml"))
+# Roberta Mode
+def test_obfuscation_roberta_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta",}
+    )
+    _deactivate_in_ci()
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_obfuscation_functions_roberta_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python"],
+            "mode": "obfuscation_functions",
+            "bpe_mode": "roberta",
+        }
+    )
+    _deactivate_in_ci()
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_monolingual_roberta_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual",
+            "bpe_mode": "roberta",
+        }
+    )
+    _deactivate_in_ci()
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_monolingual_functions_roberta_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual_functions",
+            "bpe_mode": "roberta",
+        }
+    )
+    _deactivate_in_ci()
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+# Fast BPE Mode
+def test_monolingual_fast_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual",
+            "bpe_mode": "fast",
+            "fastbpe_code_path": None,
+            "fastbpe_vocab_path": None,
+            "fastbpe_use_vocab": False,
+        }
+    )
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_monolingual_functions_fast_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual_functions",
+            "bpe_mode": "fast",
+            "fastbpe_code_path": None,
+            "fastbpe_vocab_path": None,
+            "fastbpe_use_vocab": False,
+        }
+    )
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_monolingual_functions_fast_pipeline_keep_comments():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python", "cpp"],
+            "mode": "monolingual_functions",
+            "bpe_mode": "fast",
+            "keep_comments": True,
+            "fastbpe_code_path": None,
+            "fastbpe_vocab_path": None,
+            "fastbpe_use_vocab": False,
+        }
+    )
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
+
+
+def test_obfuscation_fast_pipeline():
+    args = AttrDict(DEFAULT_PARAMETERS)
+    args.update(
+        {
+            "langs": ["java", "python"],
+            "mode": "obfuscation",
+            "bpe_mode": "fast",
+            "fastbpe_code_path": f"{os.path.abspath(bpe_path.joinpath('codes'))}",
+            "fastbpe_vocab_path": f"{os.path.abspath(bpe_path.joinpath('vocab'))}",
+            "fastbpe_use_vocab": False,
+            "ncodes": 50000,
+        }
+    )
+    preprocess(args)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 def test_obfuscation_functions_fast_pipeline():
