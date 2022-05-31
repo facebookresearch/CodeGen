@@ -15,7 +15,7 @@ import re
 from logging import getLogger
 import fastBPE
 
-FAST = str(Path(__file__).parents[2].joinpath("model/tools/fastBPE/fast"))
+FAST = str(Path(__file__).parents[3].joinpath("fastBPE/fast"))
 
 logger = getLogger()
 

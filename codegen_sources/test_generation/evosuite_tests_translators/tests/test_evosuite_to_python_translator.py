@@ -8,7 +8,7 @@ from .test_utils import read_inputs, translation_testing
 from ..evosuite_to_python import EvosuiteToPython
 
 
-ARRAYS = ["integer_array_test", "integer_array_casting"]
+ARRAYS = ["integer_array", "integer_array_casting"]
 
 JAVA_ARRAYS = ["java_list"]
 

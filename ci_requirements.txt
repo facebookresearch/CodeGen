@@ -13,6 +13,14 @@ sacrebleu==1.2.11
 javalang
 psutil
 pytest==6.2.2
+pytest-cov
 tree_sitter
 cython
 black==19.10b0
+hiplot
+mypy
+types-requests
+types-dataclasses  # for python 3.6
+types-six
+einops
+typing_extensions
