@@ -91,6 +91,8 @@ def get_subset_file(file_paths: List[Path], subset_size_gb: int, output_path: Pa
     logger.info(
         f"Subset of {[f.name for f in file_paths]} created at: {output_path.name}. Size=({output_path.stat().st_size / 1024 ** 3:.2f}GB)."
     )
+    lines = len(open(output_path).readlines())
+    logger.info(f"Output {output_path} size: {lines} lines")
     return f"{output_path}"
 
 
