@@ -89,7 +89,8 @@ python train.py
 --lgs 'java-python' \
 --max_vocab 64000 \
 --gelu_activation true\
---roberta_mode true 
+--roberta_mode true
+--max_len 512 \ 
 
 #optimization
 --amp 2  \
@@ -200,6 +201,7 @@ python train.py
 --max_vocab 64000 \
 --gelu_activation true \
 --roberta_mode true   \ 
+--max_len 512 \ 
 
 ## model reloading
 --reload_model '<PATH_TO_DOBF_MODEL>,'  \

@@ -108,6 +108,7 @@ python codegen_sources/model/train.py
 --max_vocab 64000 \
 --gelu_activation false \
 --roberta_mode false \
+--max_len 512 \
 
 #optimization
 --amp 2  \
@@ -153,6 +154,7 @@ python codegen_sources/model/train.py
 --max_vocab 64000 \
 --gelu_activation false \
 --roberta_mode false   \ 
+--max_len 512 \
 
 ## model reloading
 --reload_model '<PATH_TO_MLM_MODEL>,<PATH_TO_MLM_MODEL>'  \
