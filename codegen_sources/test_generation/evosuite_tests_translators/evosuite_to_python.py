@@ -15,7 +15,7 @@ from .evosuite_translator import EvosuiteTranslator
 
 
 class EvosuiteToPython(EvosuiteTranslator):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.imports = "import numpy as np \nimport math\nfrom math import *\nimport collections\nfrom collections import *\nimport heapq\nimport itertools\nimport random\nimport sys\nimport unittest\n"
         self.remove_casting_null = {

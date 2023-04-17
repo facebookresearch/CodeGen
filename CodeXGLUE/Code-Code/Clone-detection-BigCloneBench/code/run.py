@@ -34,7 +34,12 @@ import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 import sys
-from codegen_sources.wrappers.models import Model, ModelConfig, ModelJava
+from pathlib import Path
+root = Path(__file__).absolute().parents[4]
+print(f"adding {root} to path")
+sys.path.append(str(root))
+
+from codegen_sources.wrappers.models import ModelJava, ModelJavaFunc, ModelConfig
 from codegen_sources.wrappers.tokenizer import JavaTokenizer, RobertaJavaTokenizer
 
 try:
@@ -362,22 +367,22 @@ def evaluate(args, model, tokenizer, prefix="",pool=None,eval_when_training=Fals
         threshold=i/100
         y_preds=logits[:,1]>threshold
         from sklearn.metrics import recall_score
-        recall=recall_score(y_trues, y_preds, average='macro')
+        recall=recall_score(y_trues, y_preds)
         from sklearn.metrics import precision_score
-        precision=precision_score(y_trues, y_preds, average='macro')
+        precision=precision_score(y_trues, y_preds)
         from sklearn.metrics import f1_score
-        f1=f1_score(y_trues, y_preds, average='macro')
+        f1=f1_score(y_trues, y_preds)
         if f1>best_f1:
             best_f1=f1
             best_threshold=threshold
 
     y_preds=logits[:,1]>best_threshold
     from sklearn.metrics import recall_score
-    recall=recall_score(y_trues, y_preds, average='macro')
+    recall=recall_score(y_trues, y_preds)
     from sklearn.metrics import precision_score
-    precision=precision_score(y_trues, y_preds, average='macro')
+    precision=precision_score(y_trues, y_preds)
     from sklearn.metrics import f1_score
-    f1=f1_score(y_trues, y_preds, average='macro')
+    f1=f1_score(y_trues, y_preds)
     result = {
         "eval_recall": float(recall),
         "eval_precision": float(precision),

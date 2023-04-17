@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import typing as tp
 import re
 
 SEPARATOR = " | "
@@ -14,7 +15,7 @@ REPLACE_DICT = {
 }
 
 
-def cleanup_obfuscated_function(func, dico):
+def cleanup_obfuscated_function(func: str, dico: str) -> tp.Tuple[str, str]:
     rename_dict = build_rename_dict(func)
     previous_dict = read_dict(dico)
     assert set(rename_dict.keys()).issubset(
@@ -28,7 +29,7 @@ def cleanup_obfuscated_function(func, dico):
     return new_func, dico_to_string(func_dico)
 
 
-def rename_tok(token, rename_dict):
+def rename_tok(token: str, rename_dict: tp.Dict[str, str]) -> str:
     for prefix in OBFUSCATED_PREFIXES:
         # Replacing tokens with larger numbers first to avoid replacing parts of a token
         for match in sorted(re.findall(f"{prefix}\d+", token), reverse=True):
@@ -37,13 +38,11 @@ def rename_tok(token, rename_dict):
     return token
 
 
-def read_dict(dico):
-    return {
-        entry.strip().split()[0]: entry.strip().split()[1] for entry in dico.split("|")
-    }
+def read_dict(dico: str, separator: str = SEPARATOR) -> tp.Dict[str, str]:
+    return dict(entry.strip().split(maxsplit=1) for entry in dico.split(separator))
 
 
-def build_rename_dict(func):
+def build_rename_dict(func: str) -> tp.Dict[str, str]:
     tokens = func.split()
     rename_dict = {}
     for prefix in OBFUSCATED_PREFIXES:
@@ -56,9 +55,9 @@ def build_rename_dict(func):
     return rename_dict
 
 
-def replace_function_name(f, fname):
+def replace_function_name(f: str, fname: str) -> str:
     return " ".join(["FUNC_0" if tok == fname else tok for tok in f.split(" ")])
 
 
-def dico_to_string(dico):
-    return " | ".join([f"{k} {dico[k]}" for k in sorted(dico)])
+def dico_to_string(dico: tp.Dict[str, str], separator: str = SEPARATOR) -> str:
+    return separator.join(f"{k} {dico[k]}" for k in sorted(dico))

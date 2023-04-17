@@ -6,9 +6,15 @@
 #
 
 import difflib
+import typing as tp
 
 
-def diff_tester(expected, res, split="\n"):
+def diff_tester(
+    expected: tp.Union[str, tp.Iterable[tp.Any]],
+    res: tp.Union[str, tp.Iterable[tp.Any]],
+    split: str = "\n",
+    normalization: tp.Optional[tp.Callable] = str,
+) -> None:
     d = difflib.Differ()
     if expected != res:
         print("Expected:")
@@ -17,7 +23,20 @@ def diff_tester(expected, res, split="\n"):
         print("Got:")
         print(res)
         print("#" * 50)
-        diff = d.compare(expected.split(split), res.split(split))
+        if isinstance(expected, str):
+            expected_split = expected.split(split)
+        else:
+            expected_split = expected  # type: ignore
+        if isinstance(res, str):
+            res_split = res.split(split)
+        else:
+            res_split = res  # type: ignore
+        if normalization is not None:
+            expected_split = [normalization(x) for x in expected_split]
+            res_split = [normalization(x) for x in res_split]
+        diff = d.compare(expected_split, res_split)
         for line in diff:
             print(line)
-        assert expected == res
+        assert split.join(expected_split) == split.join(
+            res_split
+        ), f"EXPECTED: \n{split.join(expected_split)}\n\nGOT: \n{split.join(res_split)}\n"

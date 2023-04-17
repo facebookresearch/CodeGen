@@ -35,7 +35,7 @@ class Struct:
     Provides an object property accessing to a dict
     """
 
-    def __init__(self, inputDict):
+    def __init__(self, inputDict) -> None:
         self.__dict__.update(inputDict)
 
 
@@ -127,7 +127,7 @@ class FrameTrackingNodeVisitor(ast.NodeVisitor):
     and usage
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._logger = logging.getLogger(self.__class__.__name__)
 

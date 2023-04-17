@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import typing as tp
 from enum import Enum
 
 
@@ -15,13 +16,13 @@ class ObfuscatedNameType(Enum):
 
 
 class ObfuscatedNamesGenerator:
-    def __init__(self, same_name_overloaded_func=True):
+    def __init__(self, same_name_overloaded_func=True) -> None:
         self.same_name_overloaded_func = same_name_overloaded_func
-        self.obfuscation_dict = {}
+        self.obfuscation_dict: tp.Dict[ObfuscatedNameType, tp.Dict[str, str]] = {}
         for var_type in ObfuscatedNameType:
             self.obfuscation_dict[var_type] = {}
-        self.funcnames_mapping = {}
-        self.attributes_mappings = {}
+        self.funcnames_mapping: tp.Dict[str, str] = {}
+        self.attributes_mappings: tp.Dict[str, str] = {}
 
     def get_new_name(self, varname, var_type, isAttribute=False):
         var_index = len(self.obfuscation_dict[var_type])

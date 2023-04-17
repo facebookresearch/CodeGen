@@ -6,18 +6,42 @@
 #
 import math
 import os
-import sys
-from logging import getLogger
+import typing as tp
+import dataclasses
+import logging
 
 import torch
 
-from .pretrain import load_embeddings
+from ..data.dictionary import UNK_WORD
+from .pretrain import load_embeddings as load_embeddings
+
+from .. import utils
 
 # , TRANSFORMER_LAYER_PARAMS
-from .transformer import DECODER_ONLY_PARAMS, TransformerModel, Classifier
-from ..data.dictionary import UNK_WORD
+from .transformer import DECODER_ONLY_PARAMS, Classifier, TransformerModel
 
-logger = getLogger()
+logger = logging.getLogger(__name__)
+
+
+def add_missing_parameters(parameters: tp.Any, log: bool = True) -> None:
+    """Adds missing default arguments into the parameters object
+    This only applies to AttrDict instances which mock the parsed args
+    when reloaded, and may not contain up-to-date parameters
+    """
+    from codegen_sources.model.train import get_parser  # avoid circular import :(
+
+    parser = get_parser()
+    # get all defaults (simpler for debugging)
+    defaults = {}
+    for action in parser._actions:  # pylint: disable=protected-access
+        if not action.required and action.dest != "help":
+            defaults[action.dest] = action.default
+    if isinstance(parameters, utils.AttrDict):
+        for p, val in defaults.items():
+            if p not in parameters.__dict__:
+                if log:
+                    logger.info("Adding default value %s for %s in parameter", val, p)
+                parameters.__dict__[p] = val
 
 
 def check_model_params(params):
@@ -154,6 +178,7 @@ def build_model(params, dico, gpu=True):
     """
     Build model.
     """
+    add_missing_parameters(params)
     if params.encoder_only:
         # build
         model = TransformerModel(params, dico, is_encoder=True, with_output=True)
@@ -167,7 +192,9 @@ def build_model(params, dico, gpu=True):
         if params.reload_model != "":
             logger.info("============ Model Reloading")
             logger.info("Reloading model from %s ..." % params.reload_model)
-            reload_transformer(params, params.reload_model, dico, model, "model", gpu)
+            reload_transformer(
+                params, params.reload_model, dico, model, "model", gpu=gpu
+            )
 
         logger.info("Model: {}".format(model))
         logger.info(
@@ -216,16 +243,20 @@ def build_model(params, dico, gpu=True):
             # reload encoder
             if enc_path != "":
                 logger.info("Reloading encoder from %s ..." % enc_path)
-                reload_transformer(params, enc_path, dico, encoder, "encoder", gpu)
+                reload_transformer(params, enc_path, dico, encoder, "encoder", gpu=gpu)
 
             # reload decoders
             if dec_path != "":
-                for dec in decoders:
+                for i, dec in enumerate(decoders):
                     logger.info("Reloading decoders from %s ..." % dec_path)
                     if params.reload_encoder_for_decoder:
-                        reload_transformer(params, dec_path, dico, dec, "encoder", gpu)
+                        reload_transformer(
+                            params, dec_path, dico, dec, "encoder", gpu=gpu
+                        )
                     else:
-                        reload_transformer(params, dec_path, dico, dec, "decoder", gpu)
+                        reload_transformer(
+                            params, dec_path, dico, dec, "decoder", gpu, i
+                        )
 
         logger.debug("Encoder: {}".format(encoder))
         logger.debug("Decoder: {}".format(decoders))
@@ -277,7 +308,9 @@ def build_classifier(params):
     return [classifier.cuda()]
 
 
-def reload_transformer(params, path, dico, model, model_type, gpu=True):
+def reload_transformer(
+    params, path, dico, model, model_type, gpu=True, model_number=None
+):
     """
     Reload a transformer state dict to current model:
     clean 'module.' from state dict,
@@ -293,7 +326,21 @@ def reload_transformer(params, path, dico, model, model_type, gpu=True):
         if gpu
         else storage.cpu(),
     )
-    clean_model_state_dict(reloaded, model_type)
+    if "state_dicts" in reloaded:  # compatibility with new online pipeline
+        logger.warning("Reloading from multixp checkpoint (skipping safety checks)")
+        for name in ["encoder", "decoder"]:
+            reloaded[name] = reloaded["state_dicts"]["models/" + name]
+        pdict = {f.name: getattr(params, f.name) for f in dataclasses.fields(params)}
+        reloaded["params"] = pdict
+        word2id = reloaded.get("word2id", None)
+        if word2id is None:
+            logger.warning(
+                "word2id is missing in reloaded checkpoint, assuming current ones"
+            )
+            word2id = model.dico
+        reloaded["dico_word2id"] = word2id
+        reloaded["dico_id2word"] = {y: x for x, y in word2id.items()}
+    clean_model_state_dict(reloaded, model_type, model_number)
     reload_word_embeddings(reloaded, dico, model_type)
     reload_lang_embeddings(reloaded, params, model_type)
     reload_position_embeddings(reloaded, model, model_type)
@@ -324,12 +371,21 @@ def reload_transformer(params, path, dico, model, model_type, gpu=True):
     model.load_state_dict(reloaded[model_type], strict=not params.spans_emb_encoder)
 
 
-def clean_model_state_dict(reloaded, model_type):
+def clean_model_state_dict(reloaded, model_type, model_number=None):
     """
     remove prefix module from the keys of the model state dict.
     """
 
-    model_reloaded = reloaded[model_type if model_type in reloaded else "model"]
+    type_with_number = f"{model_type}_{model_number}"
+    if model_number is not None and type_with_number in reloaded:
+        model_reloaded = reloaded[type_with_number]
+    else:
+        if model_number is not None:
+            logger.info(
+                f"{type_with_number} not in reloaded model, reloading {model_type}"
+            )
+        model_reloaded = reloaded[model_type if model_type in reloaded else "model"]
+
     if all([k.startswith("module.") for k in model_reloaded.keys()]):
         model_reloaded = {k[len("module.") :]: v for k, v in model_reloaded.items()}
     reloaded[model_type] = model_reloaded

@@ -6,24 +6,24 @@
 #
 
 import os
+from logging import getLogger
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import CrossEntropyLoss, MSELoss
-from transformers.modeling_outputs import SequenceClassifierOutput
-from transformers.models.roberta.modeling_roberta import RobertaClassificationHead
 from codegen_sources.model.src.model.transformer import (
     TransformerModel,
     create_position_ids_from_input_ids,
 )
-from logging import getLogger
+from torch.nn import CrossEntropyLoss, MSELoss
+from transformers.modeling_outputs import SequenceClassifierOutput
+from transformers.models.roberta.modeling_roberta import RobertaClassificationHead
 
 logger = getLogger()
 
 
 class ModelConfig:
-    def __init__(self, params, num_labels=None, dico=None, **kwargs):
+    def __init__(self, params, num_labels=None, dico=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.num_labels = num_labels
         self.n_langs = params["n_langs"]
@@ -47,7 +47,10 @@ class ModelConfig:
         self.spans_emb_encoder = False
         self.gelu_activation = params["gelu_activation"]
         self.share_inout_emb = params["share_inout_emb"]
-        self.roberta_mode = getattr(params, "roberta_mode", False)
+        self.roberta_mode = (
+            getattr(params, "roberta_mode", False)
+            or getattr(params, "tokenization_mode", "") == "roberta"
+        )
         # needed for some of the tasks
         self.hidden_size = self.emb_dim_encoder
         self.hidden_dropout_prob = self.dropout
@@ -71,7 +74,7 @@ class ModelConfig:
 
 
 class Pooler(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.emb_dim_encoder, config.emb_dim_encoder)
         self.activation = nn.Tanh()
@@ -86,7 +89,7 @@ class Pooler(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, config, lang, is_encoder, add_pooling_layer=True):
+    def __init__(self, config, lang, is_encoder, add_pooling_layer=True) -> None:
         super(Model, self).__init__()
         self.is_encoder = is_encoder
         self.transformer = TransformerModel(config, config.dico, self.is_encoder, True)
@@ -149,7 +152,7 @@ class Model(nn.Module):
 
 
 class ModelJava(Model):
-    def __init__(self, config, is_encoder):
+    def __init__(self, config, is_encoder) -> None:
         super().__init__(config=config, lang="java_obfuscated", is_encoder=is_encoder)
 
     @classmethod
@@ -162,7 +165,7 @@ class ModelJava(Model):
 
 
 class ModelJavaFunc(Model):
-    def __init__(self, config, is_encoder):
+    def __init__(self, config, is_encoder) -> None:
         super().__init__(
             config=config, lang="java_obfuscated_func", is_encoder=is_encoder
         )
@@ -177,7 +180,7 @@ class ModelJavaFunc(Model):
 
 
 class ModelPython(Model):
-    def __init__(self, config, is_encoder):
+    def __init__(self, config, is_encoder) -> None:
         super().__init__(config=config, lang="python_obfuscated", is_encoder=is_encoder)
 
     @classmethod
@@ -190,7 +193,7 @@ class ModelPython(Model):
 
 
 class ModelPythonFunc(Model):
-    def __init__(self, config, is_encoder):
+    def __init__(self, config, is_encoder) -> None:
         super().__init__(
             config=config, lang="python_obfuscated_func", is_encoder=is_encoder
         )
@@ -258,7 +261,7 @@ class ModelEmbeddings(nn.Module):
 class ClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -275,7 +278,7 @@ class ClassificationHead(nn.Module):
 
 
 class ModelForSequenceClassification(nn.Module):
-    def __init__(self, config, lang):
+    def __init__(self, config, lang) -> None:
         super().__init__()
         self.num_labels = config.num_labels
         self.config = config
@@ -360,7 +363,7 @@ class ModelForSequenceClassification(nn.Module):
 
 
 class ModelForSequenceClassificationPython(ModelForSequenceClassification):
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         super().__init__(config=config, lang="python_obfuscated")
 
     @classmethod
@@ -371,7 +374,7 @@ class ModelForSequenceClassificationPython(ModelForSequenceClassification):
 
 
 class ModelForSequenceClassificationJava(ModelForSequenceClassification):
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         super().__init__(config=config, lang="java_obfuscated")
 
     @classmethod

@@ -1,7 +1,6 @@
 This repository is a toolkit to do machine learning for programming languages. It implements tokenization, dataset preprocessing, model training and model evaluation.
 
 We provide reference implementations of the following papers:
-- [TransCoder-ST: Leveraging Automated Unit Tests for Unsupervised Code Translation](https://arxiv.org/pdf/2110.06773.pdf) (2021)
 - [DOBF: A Deobfuscation Pre-Training Objective for Programming Languages](https://arxiv.org/pdf/2102.07492.pdf) (2021)
 - [TransCoder: Unsupervised Translation of Programming Languages](https://arxiv.org/pdf/2006.03511.pdf) (2020)
 
@@ -130,28 +129,19 @@ To have details on how to retrain specific models, please refer to the README sp
 
 ```
 @article{roziere2021dobf,
-  title={{DOBF}: A Deobfuscation Pre-Training Objective for Programming Languages},
+  title={DOBF: A Deobfuscation Pre-Training Objective for Programming Languages},
   author={Roziere, Baptiste and Lachaux, Marie-Anne and Szafraniec, Marc and Lample, Guillaume},
   journal={arXiv preprint arXiv:2102.07492},
   year={2021}
 }
 ```
 
-### TransCoder-ST
-[3] B. Roziere, J.M. Zhang, F. Charton, M. Harman, G. Synnaeve, G. Lample [Leveraging Automated Unit Tests for Unsupervised Code Translation](https://arxiv.org/pdf/2110.06773.pdf).
-
-```
-@article{roziere2021leveraging,
-  title={Leveraging Automated Unit Tests for Unsupervised Code Translation},
-  author={Roziere, Baptiste and Zhang, Jie M and Charton, Francois and Harman, Mark and Synnaeve, Gabriel and Lample, Guillaume},
-  journal={arXiv preprint arXiv:2110.06773},
-  year={2021}
-}
-```
-
-*Equal Contribution
+\* Equal Contribution
 
 ## License
 The validation and test parallel datasets from GeeksForGeeks, and the evaluation scripts under [data/transcoder_evaluation_gfg](data/transcoder_evaluation_gfg) are released under the Creative Commons Attribution-ShareAlike 2.0 license. See https://creativecommons.org/licenses/by-sa/2.0/ for more information.
 
 The rest of the `CodeGen` repository is under the MIT license. See [LICENSE](LICENSE) for more details.
+
+
+

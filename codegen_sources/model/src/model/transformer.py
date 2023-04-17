@@ -5,14 +5,24 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import typing as tp
 import itertools
 import math
+import dataclasses
 from logging import getLogger
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from codegen_sources.model.src.model.cape_embeddings import CAPE1d
+
+try:
+    from xformers import ops as xops  # type: ignore
+except (ImportError, ModuleNotFoundError):
+    xops = None
+    print("No efficient attention.")
 
 LAYER_NORM_EPSILON = 1e-5
 
@@ -83,6 +93,46 @@ def create_sinusoidal_embeddings(n_pos, dim, out):
     out.requires_grad = False
 
 
+@dataclasses.dataclass
+class LayerDropoutSelector:
+    """Randomly selects which layers should be activated or not"""
+
+    n_layers: int
+    dropout: float
+    min_layers: int
+
+    def __post_init__(self) -> None:
+        assert (
+            0 <= self.min_layers <= self.n_layers
+        ), f"minimum {self.min_layers} out of {self.n_layers}"
+
+    def select(self, train: bool) -> tp.List[bool]:
+        """Selects a set of activated layers
+
+        Parameter
+        ---------
+        train: bool
+            whether in train mode or not
+            during test mode, all layers are activated.
+
+
+        Returns
+        -------
+        List[bool]
+            a list of size n_layers providing whether the corresponding
+            layer is active or not
+        """
+        if self.dropout <= 0 or not train:
+            return [True] * self.n_layers
+        rates = np.random.rand(self.n_layers)  # unseeded?
+        to_keep = rates >= self.dropout
+        if to_keep.sum() < self.min_layers:
+            idx = rates.argsort()[::-1][: self.min_layers]
+            to_keep[idx] = True
+            assert to_keep.sum() == self.min_layers
+        return to_keep.tolist()
+
+
 def gelu(x):
     """
     GELU activation
@@ -135,8 +185,9 @@ class PredLayer(nn.Module):
     Prediction layer (cross_entropy loss).
     """
 
-    def __init__(self, params):
+    def __init__(self, params) -> None:
         super().__init__()
+        self.fp16 = params.fp16
         self.n_words = params.n_words
         self.pad_index = params.pad_index
         dim = params.emb_dim_decoder
@@ -146,17 +197,19 @@ class PredLayer(nn.Module):
         """
         Compute the loss, and optionally the scores.
         """
-        assert (y == self.pad_index).sum().item() == 0
-        scores = self.proj(x).view(-1, self.n_words)
-        loss = F.cross_entropy(scores.float(), y, reduction="mean").type_as(scores)
-        return scores, loss
+        with torch.cuda.amp.autocast(enabled=self.fp16):
+            assert (y == self.pad_index).sum().item() == 0
+            scores = self.proj(x).view(-1, self.n_words)
+            loss = F.cross_entropy(scores.float(), y, reduction="mean").type_as(scores)
+            return scores, loss
 
     def get_scores(self, x):
         """
         Compute scores.
         """
-        assert x.dim() == 2
-        return self.proj(x)
+        with torch.cuda.amp.autocast(enabled=self.fp16):
+            assert x.dim() == 2
+            return self.proj(x)
 
 
 class Classifier(nn.Module):
@@ -164,14 +217,13 @@ class Classifier(nn.Module):
     Classifier layer (cross_entropy loss).
     """
 
-    def __init__(self, params):
+    def __init__(self, params) -> None:
         super().__init__()
         self.n_classes = params.n_classes_classif
         self.emb_dim = params.emb_dim_decoder
         self.proj = Linear(self.emb_dim, params.n_classes_classif, bias=True)
 
     def forward(self, x, y, pred_mask, get_scores=False):
-
         """
         Compute the loss, and optionally the scores.
         x : len x bs  x emb_dim
@@ -193,11 +245,19 @@ class MultiHeadAttention(nn.Module):
 
     NEW_ID = itertools.count()
 
-    def __init__(self, n_heads, dim, dim_encoder=None, dropout=0):
+    def __init__(
+        self,
+        n_heads,
+        dim,
+        efficient_attn: tp.Optional[str],
+        dim_encoder=None,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.layer_id = next(MultiHeadAttention.NEW_ID)
         self.dim = dim
         self.dim_encoder = dim if dim_encoder is None else dim_encoder
+        self.efficient_attn = efficient_attn
         self.n_heads = n_heads
         self.dropout = dropout
         # assert self.dim % self.n_heads == 0
@@ -207,19 +267,34 @@ class MultiHeadAttention(nn.Module):
         self.v_lin = Linear(self.dim_encoder, dim)
         self.out_lin = Linear(dim, dim)
 
-        self.cache = None
+        self.cache: tp.Optional[dict] = None
 
-    def forward(self, input, mask, kv=None, use_cache=False):
+        if self.efficient_attn is not None:
+            self.attn_op = {
+                "flash": xops.MemoryEfficientAttentionFlashAttentionOp,
+                "cutlass": xops.MemoryEfficientAttentionCutlassOp,
+                "fctls_bflsh": xops.MemoryEfficientAttentionCutlassFwdFlashBwOp,
+                "auto": None,
+            }[self.efficient_attn]
+
+    def forward(
+        self,
+        input: torch.Tensor,
+        mask: torch.Tensor,
+        kv: tp.Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor:
         """
         Self-attention (if kv is None) or attention over source sentence (provided by kv).
+            - input (bs, qlen, dim)
+            - mask (bs, klen) (non-causal) or (bs, klen, klen)
         """
-        # Input is (bs, qlen, dim)
-        # Mask is (bs, klen) (non-causal) or (bs, klen, klen)
-
         assert not (use_cache and self.cache is None)
         bs, qlen, dim = input.size()
         if kv is None:
-            klen = qlen if not use_cache else self.cache["slen"] + qlen
+            klen = qlen
+            if use_cache:
+                klen += self.cache["slen"]  # type: ignore
         else:
             klen = kv.size(1)
         assert dim == self.dim, "Dimensions do not match: %s input vs %s configured" % (
@@ -231,11 +306,11 @@ class MultiHeadAttention(nn.Module):
         mask_reshape = (bs, 1, qlen, klen) if mask.dim() == 3 else (bs, 1, 1, klen)
 
         def shape(x):
-            """  projection """
+            """projection"""
             return x.view(bs, -1, self.n_heads, dim_per_head).transpose(1, 2)
 
         def unshape(x):
-            """  compute context """
+            """compute context"""
             return (
                 x.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * dim_per_head)
             )
@@ -244,14 +319,13 @@ class MultiHeadAttention(nn.Module):
         if kv is None:
             k = shape(self.k_lin(input))  # (bs, n_heads, qlen, dim_per_head)
             v = shape(self.v_lin(input))  # (bs, n_heads, qlen, dim_per_head)
-        elif not use_cache or self.layer_id not in self.cache:
+        elif not use_cache or self.layer_id not in self.cache:  # type: ignore
             k = v = kv
-            # (bs, n_heads, qlen, dim_per_head)
-            k = shape(self.k_lin(k))
-            # (bs, n_heads, qlen, dim_per_head)
-            v = shape(self.v_lin(v))
+            k = shape(self.k_lin(k))  # (bs, n_heads, qlen, dim_per_head)
+            v = shape(self.v_lin(v))  # (bs, n_heads, qlen, dim_per_head)
 
         if use_cache:
+            assert self.cache
             if self.layer_id in self.cache:
                 if kv is None:
                     k_, v_ = self.cache[self.layer_id]
@@ -263,30 +337,81 @@ class MultiHeadAttention(nn.Module):
                     k, v = self.cache[self.layer_id]
             self.cache[self.layer_id] = (k, v)
 
-        # (bs, n_heads, qlen, dim_per_head)
-        q = q / math.sqrt(dim_per_head)
-        # (bs, n_heads, qlen, klen)
-        scores = torch.matmul(q, k.transpose(2, 3))
-        mask = (
-            (mask == 0).view(mask_reshape).expand_as(scores)
-        )  # (bs, n_heads, qlen, klen)
-        # (bs, n_heads, qlen, klen)
-        scores.masked_fill_(mask, -float("inf"))
+        unsupported_efficient_attn = (
+            self.efficient_attn and mask.shape == (bs, klen) and not mask.all().item()
+        )
+        if unsupported_efficient_attn or self.efficient_attn is None:
+            if unsupported_efficient_attn:
+                logger.warning(
+                    "xformers does not support padding and custom masks right now. Defaulting to normal attention."
+                )
+            q = q / math.sqrt(dim_per_head)  # (bs, n_heads, qlen, dim_per_head)
+            # (bs, n_heads, qlen, klen)
+            scores = torch.matmul(q, k.transpose(2, 3))
+            mask = (
+                (mask == 0).view(mask_reshape).expand_as(scores)
+            )  # (bs, n_heads, qlen, klen)
+            # (bs, n_heads, qlen, klen)
+            scores.masked_fill_(mask, -float("inf"))
 
-        # (bs, n_heads, qlen, klen)
-        weights = F.softmax(scores.float(), dim=-1).type_as(scores)
-        # (bs, n_heads, qlen, klen)
-        weights = F.dropout(weights, p=self.dropout, training=self.training)
-        # (bs, n_heads, qlen, dim_per_head)
-        context = torch.matmul(weights, v)
-        # (bs, qlen, dim)
+            # (bs, n_heads, qlen, klen)
+            weights = F.softmax(scores.float(), dim=-1).type_as(scores)
+            # (bs, n_heads, qlen, klen)
+            weights = F.dropout(weights, p=self.dropout, training=self.training)
+            # (bs, n_heads, qlen, dim_per_head)
+            context = torch.matmul(weights, v)
+            # (bs, qlen, dim)
+        else:
+            dropout_proba = self.dropout if self.training else 0
+
+            assert xops is not None
+            # Attention Mask
+            if mask.all().item():
+                # Encoder without padding
+                attn_bias = None
+            elif mask.shape == (bs, klen):
+                raise ValueError(
+                    "Padding attention masks are not supported by xformers right now"
+                )
+                # # encoder
+                # attn_bias = (
+                #     mask.clone().type_as(q).fill_(0).masked_fill_(~mask, -float("inf"))
+                # )
+                # attn_bias = attn_bias[:, None, :].repeat(1, n_heads, 1).flatten(0, 1)
+                # attn_bias = attn_bias[:, None, :].expand(
+                #     attn_bias.shape[0], qlen, attn_bias.shape[1]
+                # )
+            elif q.size(1) == 1 and use_cache:
+                # Generation
+                attn_bias = None
+                # attn_bias: bs * num_heads, qlen, klen, num_heads
+            else:
+                # decoder forward
+                assert mask.shape == (
+                    bs,
+                    klen,
+                    klen,
+                ), f"Should be decoder but mask shape is {mask.shape}"
+                attn_bias = xops.LowerTriangularMask(device=q.device, dtype=q.dtype)
+
+            # Transpose to match format [batch, seqlen, num_heads, K]
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            output = xops.memory_efficient_attention(
+                q, k, v, p=dropout_proba, attn_bias=attn_bias, op=self.attn_op
+            )
+            # Transpose back
+            context = output.transpose(1, 2)
+
         context = unshape(context)
 
+        # output dim: bs, qlen, n_heads * dim_per_head
         return self.out_lin(context)
 
 
 class TransformerFFN(nn.Module):
-    def __init__(self, in_dim, dim_hidden, out_dim, dropout, gelu_activation):
+    def __init__(self, in_dim, dim_hidden, out_dim, dropout, gelu_activation) -> None:
         super().__init__()
         self.dropout = dropout
         self.lin1 = Linear(in_dim, dim_hidden)
@@ -299,6 +424,44 @@ class TransformerFFN(nn.Module):
         x = self.lin2(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         return x
+
+
+@dataclasses.dataclass
+class TransformerConfig:
+    fp16: bool = False
+    # model parameters
+    emb_dim: int = 512
+    emb_dim_encoder: int = 512  # those duplicated params are dangereous :s
+    emb_dim_decoder: int = 512
+    n_layers: int = 4
+    n_layers_encoder: int = 4
+    n_layers_decoder: int = 4
+    n_heads: int = 8
+    dropout: float = 0
+    attention_dropout: float = 0
+    gelu_activation: bool = False
+    share_inout_emb: bool = True
+    sinusoidal_embeddings: bool = False
+    layer_dropout: float = 0.0
+    min_layers: int = 2
+    spans_emb_encoder: bool = False
+    # CAPE relative embeddings
+    cape_embeddings: bool = False
+    cape_global_shift: float = 5.0
+    cape_local_shift: float = 0.5
+    cape_global_scaling: float = 1.0
+    discrete_cape_max: int = 0
+    use_lang_emb: bool = True
+    # added later  # where is that from?
+    n_words: int = -1
+    eos_index: int = -1
+    pad_index: int = -1
+    n_classes_classif: int = -1
+    n_langs: int = -1
+    langs: tp.List[str] = dataclasses.field(default_factory=list)
+    id2lang: tp.Dict[int, str] = dataclasses.field(default_factory=dict)
+    lang2id: tp.Dict[str, int] = dataclasses.field(default_factory=dict)
+    efficient_attn: tp.Optional[str] = None
 
 
 class TransformerModel(nn.Module):
@@ -318,13 +481,22 @@ class TransformerModel(nn.Module):
         "attention_dropout",
     ]
 
-    def __init__(self, params, dico, is_encoder, with_output):
+    def __init__(
+        self,
+        # in practice it's not really a config so far, but args for argparse
+        params: TransformerConfig,
+        dico: tp.Mapping[str, torch.Tensor],  # Dictionary,
+        is_encoder: bool,
+        with_output: bool,
+        # n_layers: tp.Optional[int] = None,  # not used?
+    ) -> None:
         """
         Transformer model (encoder or decoder).
         """
         super().__init__()
 
         # encoder / decoder, output layer
+        self.fp16 = params.fp16
         self.is_encoder = is_encoder
         self.is_decoder = not is_encoder
         self.with_output = with_output
@@ -353,22 +525,43 @@ class TransformerModel(nn.Module):
         )
         self.dropout = params.dropout
         self.attention_dropout = params.attention_dropout
-        self.roberta_mode = getattr(params, "roberta_mode", False)
+        self.roberta_mode = getattr(params, "tokenization_mode", "") == "roberta"
         self.gelu_activation = params.gelu_activation
         assert self.gelu_activation or not self.roberta_mode
+        self.layer_dropout_selector = LayerDropoutSelector(
+            n_layers=self.n_layers,
+            dropout=params.layer_dropout,
+            min_layers=params.min_layers,
+        )
         # assert self.dim % self.n_heads == 0, 'transformer dim must be a multiple of n_heads'
 
         # embeddings
-        if self.roberta_mode:
-            self.position_embeddings = Embedding(
-                N_MAX_POSITIONS, self.dim, self.pad_index
+        self.discrete_cape_max = (
+            params.discrete_cape_max if hasattr(params, "discrete_cape_max") else 0
+        )
+        if hasattr(params, "cape_embeddings") and params.cape_embeddings:
+            self.position_embeddings = CAPE1d(
+                d_model=self.dim,
+                max_global_shift=params.cape_global_shift,
+                max_local_shift=params.cape_local_shift,
+                max_global_scaling=params.cape_global_scaling,
+                normalize=False,
+                batch_first=True,
             )
         else:
-            self.position_embeddings = Embedding(N_MAX_POSITIONS, self.dim)
-        if params.sinusoidal_embeddings:
-            create_sinusoidal_embeddings(
-                N_MAX_POSITIONS, self.dim, out=self.position_embeddings.weight
-            )
+            max_positions = N_MAX_POSITIONS
+            if self.discrete_cape_max > 0:
+                max_positions += 2 * self.discrete_cape_max
+            if self.roberta_mode:
+                self.position_embeddings = Embedding(
+                    max_positions, self.dim, self.pad_index
+                )
+            else:
+                self.position_embeddings = Embedding(max_positions, self.dim)
+            if params.sinusoidal_embeddings:
+                create_sinusoidal_embeddings(
+                    max_positions, self.dim, out=self.position_embeddings.weight
+                )
         if params.n_langs > 0 and self.use_lang_emb:
             self.lang_embeddings = Embedding(self.n_langs, self.dim)
         self.embeddings = Embedding(self.n_words, self.dim, padding_idx=self.pad_index)
@@ -389,11 +582,18 @@ class TransformerModel(nn.Module):
             self.encoder_attn = nn.ModuleList()
 
         self.cache = None
+        try:
+            efficient_attn = getattr(params, "efficient_attn")
+        except (AttributeError, RuntimeError):
+            efficient_attn = None
 
         for layer_id in range(self.n_layers):
             self.attentions.append(
                 MultiHeadAttention(
-                    self.n_heads, self.dim, dropout=self.attention_dropout
+                    self.n_heads,
+                    self.dim,
+                    efficient_attn,
+                    dropout=self.attention_dropout,
                 )
             )
             self.layer_norm1.append(nn.LayerNorm(self.dim, eps=LAYER_NORM_EPSILON))
@@ -403,6 +603,7 @@ class TransformerModel(nn.Module):
                     MultiHeadAttention(
                         self.n_heads,
                         self.dim,
+                        efficient_attn,
                         dim_encoder=params.emb_dim_encoder,
                         dropout=self.attention_dropout,
                     )
@@ -424,17 +625,22 @@ class TransformerModel(nn.Module):
             if params.share_inout_emb:
                 self.pred_layer.proj.weight = self.embeddings.weight
 
+    def empty_cache(self):
+        if self.cache is not None:
+            self.cache.clear()
+
     def forward(self, mode, **kwargs):
         """
         Forward function with different forward modes.
         ### Small hack to handle PyTorch distributed.
         """
-        if mode == "fwd":
-            return self.fwd(**kwargs)
-        elif mode == "predict":
-            return self.predict(**kwargs)
-        else:
-            raise Exception("Unknown mode: %s" % mode)
+        with torch.cuda.amp.autocast(enabled=self.fp16):
+            if mode == "fwd":
+                return self.fwd(**kwargs)
+            elif mode == "predict":
+                return self.predict(**kwargs)
+            else:
+                raise Exception("Unknown mode: %s" % mode)
 
     def fwd(
         self,
@@ -466,12 +672,12 @@ class TransformerModel(nn.Module):
         # check inputs
         slen, bs = x.size()
         assert lengths.size(0) == bs
-        assert lengths.max().item() <= slen
+        assert lengths.max().item() <= slen, (lengths.max().item(), slen)
         x = x.transpose(0, 1)  # batch size as dimension 0
         assert (src_enc is None) == (src_len is None)
         if src_enc is not None:
             assert self.is_decoder
-            assert src_enc.size(0) == bs
+            assert src_enc.size(0) == bs, (src_enc.size(0), bs)
 
         # generate masks
         mask, attn_mask = get_masks(slen, lengths, causal)
@@ -489,7 +695,10 @@ class TransformerModel(nn.Module):
                 positions = x.new(slen).long()
                 positions = torch.arange(slen, out=positions).unsqueeze(0)
         else:
-            assert positions.size() == (slen, bs)
+            assert positions.size() == (
+                slen,
+                bs,
+            ), f"positions sizes: {positions.size()} do not match the size of input {slen, bs}"
             positions = positions.transpose(0, 1)
 
         # langs
@@ -499,6 +708,7 @@ class TransformerModel(nn.Module):
 
         # do not recompute cached elements
         if use_cache:
+            assert self.cache is not None
             _slen = slen - self.cache["slen"]
             x = x[:, -_slen:]
             positions = positions[:, -_slen:]
@@ -511,15 +721,35 @@ class TransformerModel(nn.Module):
         tensor = self.embeddings(x)
         if self.use_span_embeddings:
             tensor = tensor + self.spans_embeddings(spans.T)
-        tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
+        if isinstance(self.position_embeddings, CAPE1d):
+            tensor = self.position_embeddings(tensor, lengths)
+        else:
+            if self.discrete_cape_max > 0:
+                if self.training:
+                    if len(positions) == 1 and bs > 0:
+                        positions = positions.repeat((bs, 1))
+                    positions += torch.randint(
+                        low=0,
+                        high=2 * self.discrete_cape_max,
+                        size=(bs, 1),
+                        device=positions.device,
+                    )
+                else:
+                    positions += self.discrete_cape_max // 2
+            tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
         if langs is not None and self.use_lang_emb:
             tensor = tensor + self.lang_embeddings(langs)
         tensor = self.layer_norm_emb(tensor)
         tensor = F.dropout(tensor, p=self.dropout, training=self.training)
         tensor *= mask.unsqueeze(-1).to(tensor.dtype)
 
+        to_keep = self.layer_dropout_selector.select(
+            train=self.training
+        )  # always True in test
         # transformer layers
-        for i in range(self.n_layers):
+        for i, keep in enumerate(to_keep):
+            if not keep:
+                continue
 
             # self attention
             self.attentions[i].cache = self.cache
@@ -547,6 +777,7 @@ class TransformerModel(nn.Module):
 
         # update cache length
         if use_cache:
+            assert self.cache is not None
             self.cache["slen"] += tensor.size(1)
 
         # move back sequence length to dimension 0
@@ -569,7 +800,13 @@ class TransformerModel(nn.Module):
         return scores, loss
 
     def generate(
-        self, src_enc, src_len, tgt_lang_id, max_len=200, sample_temperature=None
+        self,
+        src_enc,
+        src_len,
+        tgt_lang_id,
+        max_len=200,
+        sample_temperature=None,
+        prompt=None,
     ):
         """
         Decode a sentence given initial start.
@@ -586,6 +823,8 @@ class TransformerModel(nn.Module):
             - must be None if the model only supports one language
             - lang_id if only one language is involved (LM)
             - (lang_id1, lang_id2) if two languages are involved (MT)
+        `prompt`: if None, starts generating from prompt = <bos> symbol
+        else, considers that prompt is already generated at the beginning of the ouptut
         """
 
         if isinstance(max_len, int):
@@ -596,8 +835,13 @@ class TransformerModel(nn.Module):
             global_max_len = int(max_lengths.max())
 
         # input batch
-        bs = len(src_len)
-        assert src_enc.size(0) == bs
+        assert (src_len is None) == (src_enc is None)
+        if src_len is not None and src_len.size:
+            bs = len(src_len)
+            assert src_enc.size(0) == bs
+        else:
+            assert prompt is not None, "No generation prompt in decoder-only model"
+            bs = prompt.size(1)
 
         # generated sentences
         generated = src_len.new(global_max_len, bs)  # upcoming output
@@ -615,8 +859,11 @@ class TransformerModel(nn.Module):
             positions = positions + self.pad_index + 1
 
         # language IDs
-        langs = src_len.new(global_max_len).long().fill_(tgt_lang_id)
-        langs = langs.unsqueeze(1).expand(global_max_len, bs)
+        if tgt_lang_id is None:
+            langs = None
+        else:
+            langs = src_len.new(global_max_len).long().fill_(tgt_lang_id)
+            langs = langs.unsqueeze(1).expand(global_max_len, bs)
 
         # current position / max lengths / length of generated sentences / unfinished sentences
         cur_len = 1
@@ -631,22 +878,21 @@ class TransformerModel(nn.Module):
             unfinished_mask = unfinished_sents.ne(0)
 
             should_modify = unfinished_mask.ne(previous_unfinished_mask).any()
-            restricted_mask = unfinished_mask[previous_unfinished_mask]
 
             if should_modify and self.cache is not None:
                 for k, v in self.cache.items():
                     if isinstance(k, int):
                         assert len(v) == 2
                         self.cache[k] = (
-                            cached_tensor[restricted_mask] for cached_tensor in v
+                            cached_tensor[unfinished_mask[previous_unfinished_mask]]
+                            for cached_tensor in v
                         )
-
             tensor = self.forward(
                 "fwd",
                 x=generated[:cur_len, unfinished_mask],
                 lengths=gen_len[unfinished_mask],
                 positions=positions[:cur_len, unfinished_mask],
-                langs=langs[:cur_len][:, unfinished_mask],
+                langs=None if langs is None else langs[:cur_len][:, unfinished_mask],
                 causal=True,
                 src_enc=src_enc[unfinished_mask],
                 src_len=src_len[unfinished_mask],
@@ -695,6 +941,8 @@ class TransformerModel(nn.Module):
         # sanity check
         assert (generated == self.eos_index).sum() == 2 * bs
 
+        # empty cache (saves a lot of GPU memory)
+        self.empty_cache()
         return generated[:cur_len], gen_len
 
     def generate_beam(
@@ -930,11 +1178,13 @@ class TransformerModel(nn.Module):
         # sanity check
         assert (decoded == self.eos_index).sum() == 2 * beam_size * bs
 
+        # empty cache (saves a lot of GPU memory)
+        self.empty_cache()
         return decoded, tgt_len, sorted([h[0] for h in hypotheses.hyp], reverse=True)
 
 
 class BeamHypotheses(object):
-    def __init__(self, n_hyp, max_len, length_penalty, early_stopping):
+    def __init__(self, n_hyp, max_len, length_penalty, early_stopping) -> None:
         """
         Initialize n-best list of hypotheses.
         """
@@ -942,7 +1192,7 @@ class BeamHypotheses(object):
         self.length_penalty = length_penalty
         self.early_stopping = early_stopping
         self.n_hyp = n_hyp
-        self.hyp = []
+        self.hyp: tp.List[tp.Tuple[str, torch.Tensor]] = []
         self.worst_score = 1e9
 
     def __len__(self):

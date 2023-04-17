@@ -4,17 +4,22 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
+import sys
 import argparse
 from itertools import repeat
 from logging import getLogger
 from pathlib import Path
 
 import pandas as pd
-from submitit import AutoExecutor, LocalExecutor
+import submitit
 from tqdm import tqdm
-from utils import chunks_df, add_root_to_path
 
-add_root_to_path()
+root_path = Path(__file__).absolute().parents[2]
+print(f"adding {root_path} to path")
+sys.path.append(str(root_path))
+
+
+from codegen_sources.test_generation.utils import chunks_df, add_root_to_path
 from codegen_sources.model.src.utils import set_MKL_env_vars
 from codegen_sources.model.translate import Translator
 from codegen_sources.preprocessing.utils import bool_flag
@@ -107,7 +112,7 @@ def main(args):
     output_folder_translations = output_folder.joinpath(transcoder_output_folder)
     if args.local is False:
         logger.info("Executing on cluster")
-        cluster = AutoExecutor(output_folder_translations.joinpath("log"))
+        cluster = submitit.AutoExecutor(output_folder_translations.joinpath("log"))
         cluster.update_parameters(
             cpus_per_task=10,
             gpus_per_node=1,

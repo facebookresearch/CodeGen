@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
+import sys
 import argparse
 import pickle
 from concurrent.futures.process import ProcessPoolExecutor
@@ -12,10 +13,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from submitit import AutoExecutor, LocalExecutor
+from submitit import AutoExecutor
 from tqdm import tqdm
-
-import sys
 
 
 root_path = Path(__file__).absolute().parents[2]
@@ -30,10 +29,7 @@ from codegen_sources.test_generation.evosuite_tests_translators.evosuite_to_cpp 
 from codegen_sources.test_generation.evosuite_tests_translators.evosuite_to_python import (
     EvosuiteToPython,
 )
-from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
-from codegen_sources.test_generation.test_runners.python_test_runner import (
-    PythonTestRunner,
-)
+from codegen_sources.code_runners import test_runners
 from codegen_sources.test_generation.utils import (
     chunks,
     compute_results_one_test,
@@ -117,11 +113,11 @@ def compute_test_results(
     )
     input_df = pd.read_csv(translations_csv_path)
     if target_language == "python":
-        test_runner = PythonTestRunner()
+        test_runner = test_runners.PythonEvosuiteTestRunner()
         test_translator = EvosuiteToPython()
     else:
         assert target_language == "cpp"
-        test_runner = CppTestRunner(compilation_timeout=30)
+        test_runner = test_runners.CppEvosuiteTestRunner(compilation_timeout=30)
         test_translator = EvosuiteToCpp()
     translated_func_col = f"translated_{target_language}_functions_beam_"
     beam_size = get_beam_size(input_df, translated_func_col)

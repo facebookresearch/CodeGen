@@ -59,10 +59,10 @@ All of these data should be contain in the same folder. The path is given as ```
 In our case we use NGPU=8
 
 #### Get Training Data
-First get raw data from Google BigQuery ([see](googlebigquery.md)).
+First get raw data from google big Query ([see](GoogleBigQuery_README.md)).
 
 Then run the following command to get the monolingual data for MLM:
-```bash
+```
 python -m codegen_sources.preprocessing.preprocess 
 <DATASET_PATH>                                     # folder containing raw data i.e json.gz
 --langs cpp java python                            # languages to prepocess
@@ -83,7 +83,7 @@ Simpy download the binarized data [transcoder_test_set.zip](https://dl.fbaipubli
 
 ### Train
 Train a MLM Model:
-```bash
+```
 python codegen_sources/model/train.py 
 
 ## main parameters
@@ -126,7 +126,7 @@ python codegen_sources/model/train.py
 
 To train transcoder from a pretrained model (MLM or DOBF - for DOBF [see]):
  
-```bash 
+``` 
 python codegen_sources/model/train.py   
 
 ## main parameters
@@ -227,7 +227,7 @@ You do not need to have the training data in your ```data_path```, only the vali
 
 ## Results
 Our CA@1 results with the models we provide for beam size 1 (i.e. greedy decoding) and 10 (using length_penalty = 0.5 for beam size 10).
-The CA@N metrics may vary slightly due to timeouts. Our results for TransCoder are sligthly different from those of the original paper due to code and libraries updates.
+The CA@N metrics may vary slightly due to timeouts. Our results for TransCoder are sligthly different from those of the original paper due to small changes in our test set and code.
 The model trained from DOBF was selected based on the validation score for Java -> Python.
 
 <table>
@@ -257,33 +257,32 @@ The model trained from DOBF was selected based on the validation score for Java 
    </tr>
    <tr>
       <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_1.pth" target="_blank">TransCoder_model_1</a></td>
-      <td>62.99</td>
-      <td>64.86</td>
-      <td>44.71</td>
-      <td>47.08</td>
-      <td>80.04</td>
-      <td>78.76</td>
-      <td>46.87</td>
-      <td>48.81</td>
-      <td>31.55</td>
-      <td>33.69</td>
-      <td>33.89</td>
-      <td>35.55</td>
+      <td>62.05</td>
+      <td>64.36</td>
+      <td>43.91</td>
+      <td>45.65</td>
+      <td>79.83</td>
+      <td>78.74</td>
+      <td>46.52</td>
+      <td>48.70</td>
+      <td>43.82</td>
+      <td>44.69</td>
+      <td>48.22</td>
    </tr>
    <tr>
       <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/TransCoder_model_2.pth" target="_blank">TransCoder_model_2</a></td>
-      <td>62.37</td>
-      <td>62.99</td>
-      <td>42.33</td>
-      <td>43.41</td>
-      <td>77.68</td>
-      <td>78.54</td>
-      <td>46.87</td>
-      <td>47.73</td>
-      <td>29.61</td>
-      <td>32.4</td>
-      <td>32.64</td>
-      <td>35.97</td>
+      <td>61.84</td>
+      <td>62.89</td>
+      <td>41.74</td>
+      <td>43.04</td>
+      <td>77.44</td>
+      <td>78.31</td>
+      <td>46.30</td>
+      <td>48.26</td>
+      <td>43.38</td>
+      <td>47.94/td>
+      <td>47.80</td>
+      <td>49.27</td>
    </tr>
    <tr>
       <td><a href="https://dl.fbaipublicfiles.com/transcoder/pre_trained_models/translator_transcoder_size_from_DOBF.pth" target="_blank">TransCoder from DOBF</a></td>
@@ -293,12 +292,27 @@ The model trained from DOBF was selected based on the validation score for Java 
       <td>-</td>
       <td>-</td>
       <td>-</td>
-      <td>49.24</td>
-      <td>52.7</td>
+      <td>48.91</td>
+      <td>51.74</td>
       <td>-</td>
       <td>-</td>
-      <td>39.5</td>
-      <td>45.32</td>
+      <td>54.51</td>
+      <td>55.56</td>
+   </tr>
+   <tr>
+      <td><a href="TransCoder-ST.md" target="_blank">TransCoder-ST</a></td>
+      <td>66.46</td>
+      <td>67.51</td>
+      <td>60.65</td>
+      <td>61.09</td>
+      <td>83.95</td>
+      <td>84.38</td>
+      <td>67.39</td>
+      <td>68.70</td>
+      <td>54.88</td>
+      <td>56.83</td>
+      <td>57.44</td>
+      <td>58.70</td>
    </tr>
 </table>
 

@@ -6,6 +6,7 @@
 #
 import pickle
 import random
+import typing as tp
 from logging import getLogger
 from pathlib import Path
 
@@ -15,7 +16,7 @@ logger = getLogger()
 
 
 class Cache(object):
-    def __init__(self, elements=None, params=None):
+    def __init__(self, elements=None, params=None) -> None:
         self.eos_index = params.eos_index
         self.pad_index = params.pad_index
         self.elements = elements
@@ -58,13 +59,15 @@ class Cache(object):
                 for s, l in zip(sequences, lengths)
             ]
         )
-        lengths = torch.LongTensor(lengths)
-        sent = torch.LongTensor(max(lengths), len(lengths)).fill_(self.pad_index)
-        assert min(lengths) > 2
+        lengths_tensor = torch.LongTensor(lengths)
+        sent = torch.LongTensor(max(lengths_tensor), len(lengths_tensor)).fill_(
+            self.pad_index
+        )
+        assert min(lengths_tensor) > 2
         for i, s in enumerate(sequences):
-            sent[0 : lengths[i], i].copy_(s[: lengths[i]])
+            sent[0 : int(lengths_tensor[i]), i].copy_(s[: int(lengths_tensor[i])])
 
-        return sent, lengths
+        return sent, lengths_tensor
 
     def limit_tokens_per_batch(self, sampled_elements):
         max_len = 0
@@ -99,7 +102,7 @@ class Cache(object):
 
 
 class ListCache(Cache):
-    def __init__(self, elements: list = None, params=None):
+    def __init__(self, elements: tp.Optional[tp.List] = None, params=None) -> None:
         super().__init__(elements, params)
         if elements is None:
             self.elements = []
@@ -129,7 +132,7 @@ class ListCache(Cache):
 
 
 class RoundRobinCache(Cache):
-    def __init__(self, elements: list = None, params=None):
+    def __init__(self, elements: tp.Optional[tp.List] = None, params=None) -> None:
         super().__init__(elements, params)
         self.cache_size = params.cache_size
         if elements is None:

@@ -8,29 +8,32 @@ import math
 import os
 import random
 import time
+import typing as tp
 from collections import OrderedDict
 from concurrent.futures.process import ProcessPoolExecutor
 from logging import getLogger
 
-import apex
 import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
 
 from .cache import ListCache, RoundRobinCache
 from .data.loader import SELF_TRAINED
-from .model.CustomDDP import CustomTorchDDP, CustomApexDDP
+from .model import CustomDDP
 from .optim import get_optimizer
 from .utils import (
+    add_noise,
+    batch_sentences,
+    concat_batches,
     parse_lambda_config,
+    show_batch,
+    to_cuda,
     update_lambdas,
     convert_to_text,
-    add_noise,
     safe_index,
     restore_segmentation_sentence,
     get_programming_language_name,
 )
-from .utils import to_cuda, concat_batches, batch_sentences, show_batch
 import sys
 from pathlib import Path
 
@@ -38,16 +41,17 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parents[3]))
 print("adding to path", str(Path(__file__).parents[3]))
 
-from codegen_sources.test_generation.test_runners.python_test_runner import (
-    PythonTestRunner,
-)
-from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
+from ...code_runners import test_runners
 
 logger = getLogger()
+LTensor = torch.LongTensor
+OptLTensor = tp.Optional[torch.LongTensor]
+# x, lengths, positions, langs = concat_batches(
+SampleInfo = tp.Tuple[LTensor, LTensor, LTensor, LTensor]
 
 
-class Trainer(object):
-    def __init__(self, data, params, model_names):
+class Trainer:
+    def __init__(self, data, params, model_names: tp.List[str]) -> None:
         """
         Initialize trainer.
         """
@@ -61,7 +65,9 @@ class Trainer(object):
             assert self.epoch_size > 0
 
         # data iterators
-        self.iterators = {}
+        self.iterators: tp.Dict[
+            tp.Tuple[tp.Optional[str], ...], tp.Iterator[tp.List[SampleInfo]]
+        ] = {}
 
         # set parameters
         self.set_parameters()
@@ -69,7 +75,7 @@ class Trainer(object):
         # float16 / distributed (no AMP)
         assert params.amp >= 1 or not params.fp16
         assert params.amp >= 0 or params.accumulate_gradients == 1
-        if params.multi_gpu and params.amp == -1:
+        if params.multi_gpu and not params.apex:
             logger.info("Using nn.parallel.DistributedDataParallel ...")
             for name in self.MODEL_NAMES:
                 model_attr = getattr(self, name)
@@ -78,11 +84,12 @@ class Trainer(object):
                         self,
                         name,
                         [
-                            CustomTorchDDP(
+                            CustomDDP.CustomTorchDDP(
                                 model,
                                 device_ids=[params.local_rank],
                                 output_device=params.local_rank,
                                 broadcast_buffers=True,
+                                find_unused_parameters=True,
                             )
                             for model in model_attr
                         ],
@@ -91,11 +98,12 @@ class Trainer(object):
                     setattr(
                         self,
                         name,
-                        CustomTorchDDP(
+                        CustomDDP.CustomTorchDDP(
                             model_attr,
                             device_ids=[params.local_rank],
                             output_device=params.local_rank,
                             broadcast_buffers=True,
+                            find_unused_parameters=True,
                         ),
                     )
 
@@ -103,8 +111,20 @@ class Trainer(object):
         self.set_optimizers()
 
         # float16 / distributed (AMP)
-        if params.amp >= 0:
-            self.init_amp()
+        self.scaler = None
+        if params.fp16 and not params.apex:
+            logger.info("Using torch.cuda.amp GradScaler for fp16 optimization")
+            self.scaler = torch.cuda.amp.GradScaler()
+            assert params.accumulate_gradients >= 1
+        else:
+            assert params.accumulate_gradients == 1
+            # TODO: accumulation should be possible with:
+            # https://github.com/pytorch/pytorch/pull/21736
+
+        # float16 with apex. A bit faster but issues saving optimizer state
+        if params.amp >= 0 and params.apex:
+
+            self.init_amp_apex()
             if params.multi_gpu:
                 logger.info("Using apex.parallel.DistributedDataParallel ...")
                 for name in self.MODEL_NAMES:
@@ -114,13 +134,15 @@ class Trainer(object):
                             self,
                             name,
                             [
-                                CustomApexDDP(model, delay_allreduce=True)
+                                CustomDDP.CustomApexDDP(model, delay_allreduce=True)
                                 for model in model_attr
                             ],
                         )
                     else:
                         setattr(
-                            self, name, CustomApexDDP(model_attr, delay_allreduce=True),
+                            self,
+                            name,
+                            CustomDDP.CustomApexDDP(model_attr, delay_allreduce=True),
                         )
 
         # stopping criterion used for early stopping
@@ -130,18 +152,27 @@ class Trainer(object):
             self.decrease_counts_max = int(split[1])
             self.decrease_counts = 0
             if split[0][0] == "_":
-                self.stopping_criterion = (split[0][1:], False)
+                self.stopping_criterion: tp.Optional[tp.Tuple[str, bool]] = (
+                    split[0][1:],
+                    False,
+                )
             else:
                 self.stopping_criterion = (split[0], True)
-            self.best_stopping_criterion = -1e12 if self.stopping_criterion[1] else 1e12
+            self.best_stopping_criterion: tp.Optional[float] = (
+                -1e12 if self.stopping_criterion[1] else 1e12
+            )
         else:
             self.stopping_criterion = None
             self.best_stopping_criterion = None
 
         if len(params.st_steps) > 0:
             self.test_runners = {
-                "python": PythonTestRunner(timeout=params.st_test_timeout),
-                "cpp": CppTestRunner(timeout=params.st_test_timeout),
+                "python": test_runners.PythonEvosuiteTestRunner(
+                    timeout=params.st_test_timeout
+                ),
+                "cpp": test_runners.CppEvosuiteTestRunner(
+                    timeout=params.st_test_timeout
+                ),
             }
             self.unit_tests = data[f"java_st_unit_tests"]
 
@@ -172,15 +203,16 @@ class Trainer(object):
         self.n_iter = 0
         self.n_total_iter = 0
         self.n_sentences = 0
-        self.stats = OrderedDict(
-            [("processed_s", 0), ("processed_w", 0)]
-            + [("CLM-%s" % l, []) for l in params.langs]
+        stats: tp.List[tp.Tuple[str, tp.Any]] = [("processed_s", 0), ("processed_w", 0)]
+        stats.extend(
+            [("CLM-%s" % l, []) for l in params.langs]
             + [("CLM-%s" % ("-".join(keys)), []) for keys in data["para"].keys()]
             + [("CLM-%s" % "-".join(keys[::-1]), []) for keys in data["para"].keys()]
             + [("MLM-%s" % l, []) for l in params.langs]
             + [("MLM-%s" % ("-".join(keys)), []) for keys in data["para"].keys()]
             + [("MLM-%s" % "-".join(keys[::-1]), []) for keys in data["para"].keys()]
             + [("AE-%s" % lang, []) for lang in params.ae_steps]
+            + [("TAE-%s-%s" % (lang1, lang2), []) for lang1, lang2 in params.tae_steps]
             + [("MT-%s-%s" % (l1, l2), []) for l1, l2 in params.mt_steps]
             + [
                 ("MT-%s-%s-%s" % (l1, l2, span), [])
@@ -207,6 +239,7 @@ class Trainer(object):
                 if l2_1 != l2_2
             ]
         )
+        self.stats = OrderedDict(stats)
         self.last_time = time.time()
         self.st_langs = set()
         for lang1, langs2 in params.st_steps:
@@ -227,7 +260,7 @@ class Trainer(object):
         # initialize lambda coefficients and their configurations
         parse_lambda_config(params)
 
-    def load_initial_cache(self):
+    def load_initial_cache(self) -> None:
         for (l1, l2), cache in self.st_cache.items():
             cache_path = Path(self.params.cache_init_path).joinpath(
                 f"cache_{l1}-{l2}.pkl"
@@ -235,7 +268,7 @@ class Trainer(object):
             assert cache_path.is_file(), f"initial cache file {cache_path} is missing"
             cache.load(cache_path)
 
-    def set_parameters(self):
+    def set_parameters(self) -> None:
         """
         Set parameters.
         """
@@ -261,7 +294,7 @@ class Trainer(object):
             logger.info("Found %i parameters in %s." % (len(v), k))
             assert len(v) >= 1
 
-    def set_optimizers(self):
+    def set_optimizers(self) -> None:
         """
         Set optimizers.
         """
@@ -276,10 +309,13 @@ class Trainer(object):
         # log
         logger.info("Optimizers: %s" % ", ".join(self.optimizers.keys()))
 
-    def init_amp(self):
+    def init_amp_apex(self) -> None:
         """
         Initialize AMP optimizer.
         """
+        # online import to avoid installing if not used (eg in the CI)
+        from apex import amp  # type: ignore
+
         params = self.params
         assert (
             params.amp == 0
@@ -297,7 +333,7 @@ class Trainer(object):
                 else [getattr(self, name)]
             )
         ]
-        models, optimizers = apex.amp.initialize(
+        models, optimizers = amp.initialize(
             models,
             [self.optimizers[k] for k in opt_names],
             opt_level=("O%i" % params.amp),
@@ -319,7 +355,7 @@ class Trainer(object):
             opt_name: optimizer for opt_name, optimizer in zip(opt_names, optimizers)
         }
 
-    def optimize(self, loss):
+    def optimize(self, loss: torch.Tensor) -> None:
         """
         Optimize.
         """
@@ -335,7 +371,7 @@ class Trainer(object):
         optimizers = [self.optimizers[k] for k in names]
 
         # regular optimization
-        if params.amp == -1:
+        if params.fp16 is False:
             for optimizer in optimizers:
                 optimizer.zero_grad()
             loss.backward()
@@ -349,15 +385,17 @@ class Trainer(object):
                 optimizer.step()
 
         # AMP optimization
-        else:
+        elif params.apex:
+            from apex import amp  # type: ignore
+
             if self.n_iter % params.accumulate_gradients == 0:
-                with apex.amp.scale_loss(loss, optimizers) as scaled_loss:
+                with amp.scale_loss(loss, optimizers) as scaled_loss:
                     scaled_loss.backward()
                 if params.clip_grad_norm > 0:
                     for name in names:
                         # norm_check_a = (sum([p.grad.norm(p=2).item() ** 2 for p in apex.amp.master_params(self.optimizers[name])])) ** 0.5
                         clip_grad_norm_(
-                            apex.amp.master_params(self.optimizers[name]),
+                            amp.master_params(self.optimizers[name]),
                             params.clip_grad_norm,
                         )
                         # norm_check_b = (sum([p.grad.norm(p=2).item() ** 2 for p in apex.amp.master_params(self.optimizers[name])])) ** 0.5
@@ -366,12 +404,27 @@ class Trainer(object):
                     optimizer.step()
                     optimizer.zero_grad()
             else:
-                with apex.amp.scale_loss(
+                with amp.scale_loss(
                     loss, optimizers, delay_unscale=True
                 ) as scaled_loss:
                     scaled_loss.backward()
+        else:
+            assert self.scaler is not None
+            self.scaler.scale(loss).backward()
+            if (self.n_iter + 1) % params.accumulate_gradients == 0:
+                for name in names:
+                    if params.clip_grad_norm > 0:
+                        # https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-clipping
+                        # Unscales the gradients of optimizer's assigned params in-place
+                        self.scaler.unscale_(self.optimizers[name])
+                        torch.nn.utils.clip_grad_norm_(
+                            self.parameters[name], params.clip_grad_norm
+                        )
+                    self.scaler.step(self.optimizers[name])
+                    self.scaler.update()
+                    self.optimizers[name].zero_grad()
 
-    def iter(self):
+    def iter(self) -> None:
         """
         End of iteration.
         """
@@ -381,7 +434,7 @@ class Trainer(object):
         if self.n_iter % 5 == 0:
             self.print_stats()
 
-    def print_stats(self):
+    def print_stats(self) -> None:
         """
         Print statistics about the training.
         """
@@ -391,7 +444,7 @@ class Trainer(object):
         s_iter = "%7i - " % self.n_total_iter
         s_stat = " || ".join(
             [
-                "{}: {:7.4f}".format(k, np.mean(v))
+                "{}: {:7.4f}".format(k, float(np.mean(v)))
                 for k, v in self.stats.items()
                 if type(v) is list and len(v) > 0
             ]
@@ -432,14 +485,14 @@ class Trainer(object):
 
     def get_iterator(
         self,
-        iter_name,
-        lang1,
-        lang2,
-        stream,
-        span=None,
-        self_training=False,
+        iter_name: str,
+        lang1: str,
+        lang2: tp.Optional[str],
+        stream: bool,
+        span: tp.Optional[str] = None,  # not sure what type it actually is
+        self_training: bool = False,
         st_scores_cutoff=None,
-    ):
+    ) -> tp.Iterator[SampleInfo]:
         """
         Create a new iterator for a dataset.
         """
@@ -503,14 +556,14 @@ class Trainer(object):
 
     def get_batch(
         self,
-        iter_name,
-        lang1,
+        iter_name: str,
+        lang1: str,
         lang2=None,
         stream=False,
         span=None,
         self_training=False,
         st_scores_cutoff=None,
-    ):
+    ) -> tp.List[LTensor]:  # this typing is bad, but we cant be more precise :(
         """
         Return a batch of sentences from a dataset.
         """
@@ -538,7 +591,7 @@ class Trainer(object):
         ):
             iterator = None
         if iterator is None:
-            iterator = self.get_iterator(
+            iterator = self.get_iterator(  # type: ignore
                 iter_name,
                 lang1,
                 lang2,
@@ -548,9 +601,9 @@ class Trainer(object):
                 st_scores_cutoff=st_scores_cutoff,
             )
         try:
-            x = next(iterator)
+            x = next(iterator)  # type: ignore
         except StopIteration:
-            iterator = self.get_iterator(
+            iterator = self.get_iterator(  # type: ignore
                 iter_name,
                 lang1,
                 lang2,
@@ -559,10 +612,12 @@ class Trainer(object):
                 self_training=self_training,
                 st_scores_cutoff=st_scores_cutoff,
             )
-            x = next(iterator)
-        return x if lang2 is None or lang1 < lang2 else x[::-1]
+            x = next(iterator)  # type: ignore
+        return x if lang2 is None or lang1 < lang2 else x[::-1]  # type: ignore
 
-    def mask_out(self, x, lengths):
+    def mask_out(
+        self, x: LTensor, lengths: LTensor
+    ) -> tp.Tuple[LTensor, LTensor, LTensor]:
         """
         Decide of random words to mask out, and what target they get assigned.
         """
@@ -608,15 +663,17 @@ class Trainer(object):
             + _x_real * (probs == 1).long()
             + _x_rand * (probs == 2).long()
         )
-        x = x.masked_scatter(pred_mask, _x)
+        x = x.masked_scatter(pred_mask, _x)  # type: ignore
 
         assert 0 <= x.min() <= x.max() < params.n_words
         assert x.size() == (slen, bs)
         assert pred_mask.size() == (slen, bs)
 
-        return x, _x_real, pred_mask
+        return x, _x_real, pred_mask  # type: ignore
 
-    def deobfuscate(self, x, y, p):
+    def deobfuscate(
+        self, x: LTensor, y: LTensor, p: float
+    ) -> tp.Tuple[LTensor, LTensor]:
         """
         Deobfuscate class, function and variable name with probabilty p.
         For all variables, functions and classes, we pick some occurences with a probability p and deobfuscate them.
@@ -630,10 +687,9 @@ class Trainer(object):
         obf_tokens = (x >= self.data["dico"].obf_index["CLASS"]) * (
             x < (self.data["dico"].obf_index["CLASS"] + self.data["dico"].n_obf_tokens)
         )
-        dobf_mask = np.random.rand(slen, bs) <= p
-        dobf_mask = torch.from_numpy(dobf_mask)
+        dobf_mask = torch.from_numpy(np.random.rand(slen, bs) <= p)
         dobf_mask = dobf_mask * obf_tokens
-        x[dobf_mask] = -x[
+        x[dobf_mask] = -x[  # type: ignore
             dobf_mask
         ]  # put to negative all the obf_tokens that have to be restored
 
@@ -672,15 +728,17 @@ class Trainer(object):
         for i in range(bs):
             for k, v in d[i].items():
                 x_[i] = x_[i].replace(f"-{k}", v)
-            x_[i] = np.array([int(id) for id in x_[i].split()])
+            x_[i] = np.array([int(id) for id in x_[i].split()])  # type: ignore
 
         x_b, lengths = batch_sentences(x_, self.params.pad_index, self.params.eos_index)
 
-        assert sum(sum((x_b < 0).float())) == 0
+        assert sum(sum((x_b < 0).float())) == 0  # type: ignore
 
         return (x_b, lengths)
 
-    def deobfuscate_by_variable(self, x, y, p, roberta_mode, rng=None):
+    def deobfuscate_by_variable(
+        self, x: LTensor, y: LTensor, p: float, roberta_mode: bool, rng=None
+    ) -> tp.Tuple[OptLTensor, OptLTensor, OptLTensor, OptLTensor]:
         """
         Deobfuscate class, function and variable name with probabilty p, by variable blocked.
         We chose some variables VAR_N, functions FUNC_N or class CLASS_N - with probability p - to deobfuscate entirely.
@@ -743,8 +801,8 @@ class Trainer(object):
 
         # restore x i.e select variable with probability p and restore all occurence of this variable
         # keep only unrestored variable in dictionary d_
-        x = []
-        y = []
+        x2 = []
+        y2 = []
 
         for i in range(bs):
             d_ = []
@@ -782,22 +840,30 @@ class Trainer(object):
             else:
                 sent_ids = np.array([int(id) for id in x_[i].split()])
             if len(sent_ids) < self.params.max_len:
-                x.append(sent_ids)
+                x2.append(sent_ids[: self.params.max_len - 2])
                 d_ids = sep.join([" ".join([k, v]) for k, v in reversed(d_)])
-                d_ids = np.array([int(id) for id in d_ids.split()])
-                y.append(d_ids)
+                d_ids = np.array([int(id) for id in d_ids.split()])  # type: ignore
+                y2.append(d_ids)
 
-        if len(x) == 0:
+        if len(x2) == 0:
             return None, None, None, None
 
-        x, len_x = batch_sentences(x, self.params.pad_index, self.params.eos_index)
-        y, len_y = batch_sentences(y, self.params.pad_index, self.params.eos_index)
+        x, len_x = batch_sentences(x2, self.params.pad_index, self.params.eos_index)
+        y, len_y = batch_sentences(y2, self.params.pad_index, self.params.eos_index)
 
-        assert sum(sum((x < 0).float())) == 0
+        assert sum(sum((x < 0).float())) == 0  # type: ignore
 
         return (x, len_x, y, len_y)
 
-    def generate_batch(self, lang1, lang2, name):
+    def generate_batch(
+        self, lang1: str, lang2: str, name: str
+    ) -> tp.Tuple[
+        LTensor,
+        LTensor,
+        LTensor,
+        LTensor,
+        tp.Tuple[tp.Optional[LTensor], tp.Optional[LTensor]],
+    ]:
         """
         Prepare a batch (for causal or non-causal mode).
         """
@@ -826,6 +892,7 @@ class Trainer(object):
             )
         else:
             (x1, len1, _, _), (x2, len2, _, _) = self.get_batch(name, lang1, lang2)
+
             x, lengths, positions, langs = concat_batches(
                 x1,
                 len1,
@@ -846,7 +913,7 @@ class Trainer(object):
             (None, None) if lang2 is None else (len1, len2),
         )
 
-    def save_checkpoint(self, name, include_optimizers=True):
+    def save_checkpoint(self, name: str, include_optimizers: bool = True) -> None:
         """
         Save the model / checkpoints.
         """
@@ -887,6 +954,8 @@ class Trainer(object):
             for name in self.optimizers.keys():
                 logger.warning(f"Saving {name} optimizer ...")
                 data[f"{name}_optimizer"] = self.optimizers[name].state_dict()
+            if self.scaler is not None:
+                data[f"scaler"] = self.scaler.state_dict()
 
         data["dico_id2word"] = self.data["dico"].id2word
         data["dico_word2id"] = self.data["dico"].word2id
@@ -895,17 +964,17 @@ class Trainer(object):
 
         torch.save(data, path)
 
-    def reload_checkpoint(self):
+    def reload_checkpoint(self) -> None:
         """
         Reload a checkpoint if we find one.
         """
-        checkpoint_path = os.path.join(self.params.dump_path, "checkpoint.pth")
-        if not os.path.isfile(checkpoint_path):
+        checkpoint_path = Path(self.params.dump_path) / "checkpoint.pth"
+        if not checkpoint_path.is_file():
             if self.params.reload_checkpoint == "":
                 return
             else:
-                checkpoint_path = self.params.reload_checkpoint
-                assert os.path.isfile(checkpoint_path)
+                checkpoint_path = Path(self.params.reload_checkpoint)
+                assert checkpoint_path.is_file()
         logger.warning(f"Reloading checkpoint from {checkpoint_path} ...")
         data = torch.load(checkpoint_path, map_location="cpu")
 
@@ -934,11 +1003,9 @@ class Trainer(object):
         # reload optimizers
         for name in self.optimizers.keys():
             if (
-                False
+                self.params.apex
             ):  # AMP checkpoint reloading is buggy, we cannot do that - TODO: fix - https://github.com/NVIDIA/apex/issues/250
-                logger.warning(f"Reloading checkpoint optimizer {name} ...")
-                self.optimizers[name].load_state_dict(data[f"{name}_optimizer"])
-            else:  # instead, we only reload current iterations / learning rates
+                # instead, we only reload current iterations / learning rates
                 logger.warning(f"Not reloading checkpoint optimizer {name}.")
                 for group_id, param_group in enumerate(
                     self.optimizers[name].param_groups
@@ -955,6 +1022,26 @@ class Trainer(object):
                     param_group["lr"] = self.optimizers[name].get_lr_for_step(
                         param_group["num_updates"]
                     )
+            else:
+                logger.warning(f"Reloading checkpoint optimizer {name}...")
+                self.optimizers[name].load_state_dict(data[f"{name}_optimizer"])
+                for group_id, param_group in enumerate(
+                    self.optimizers[name].param_groups
+                ):
+                    for k in ["num_updates", "lr"]:
+                        if k in param_group:
+                            logger.warning(
+                                f"Optimizer parameter group (ID={group_id})"
+                                f" - {k}: {param_group[k]}"
+                            )
+
+                # reload gradient scaler
+                if self.params.fp16:
+                    logger.warning("Reloading gradient scaler ...")
+                    assert self.scaler is not None
+                    self.scaler.load_state_dict(data["scaler"])
+                else:
+                    assert self.scaler is None and "scaler" not in data
 
         # reload main metrics
         self.epoch = data["epoch"] + 1
@@ -965,7 +1052,7 @@ class Trainer(object):
             f"Checkpoint reloaded. Resuming at epoch {self.epoch} / iteration {self.n_total_iter} ..."
         )
 
-    def save_periodic(self):
+    def save_periodic(self) -> None:
         """
         Save the models periodically.
         """
@@ -1069,7 +1156,9 @@ class Trainer(object):
         assert x.size(1) % 8 == 0
         return x, lengths, positions, langs, idx
 
-    def clm_step(self, lang1, lang2, lambda_coeff):
+    def clm_step(
+        self, lang1: str, lang2: str, lambda_coeff: float, show_example: bool = False
+    ) -> None:
         """
         Next word prediction step (causal prediction).
         CLM objective.
@@ -1079,18 +1168,30 @@ class Trainer(object):
             return
         params = self.params
         name = "model" if params.encoder_only else "decoder"
-        model = getattr(self, name)
+        model = getattr(self, name)[0]
         model.train()
 
         # generate batch / select words to predict
         x, lengths, positions, langs, _ = self.generate_batch(lang1, lang2, "causal")
         x, lengths, positions, langs, _ = self.round_batch(x, lengths, positions, langs)
-        alen = torch.arange(lengths.max(), dtype=torch.long, device=lengths.device)
+        alen = torch.arange(
+            lengths.max(), dtype=torch.long, device=lengths.device
+        )  # type: ignore
         pred_mask = alen[:, None] < lengths[None] - 1
         if params.context_size > 0:  # do not predict without context
             pred_mask[: params.context_size] = 0
         y = x[1:].masked_select(pred_mask[:-1])
         assert pred_mask.sum().item() == y.size(0)
+
+        if show_example:
+            show_batch(
+                logger,
+                [("Sentence", x.transpose(0, 1))],
+                self.data["dico"],
+                self.params.tokenization_mode,
+                "Training",
+                self.params.sentencepiece_model_path,
+            )
 
         # cuda
         x, lengths, langs, pred_mask, y = to_cuda(x, lengths, langs, pred_mask, y)
@@ -1113,7 +1214,9 @@ class Trainer(object):
         self.stats["processed_s"] += lengths.size(0)
         self.stats["processed_w"] += pred_mask.sum().item()
 
-    def mlm_step(self, lang1, lang2, lambda_coeff, show_example=False):
+    def mlm_step(
+        self, lang1: str, lang2: str, lambda_coeff: float, show_example: bool = False
+    ) -> None:
         """
         Masked word prediction step.
         MLM objective is lang2 is None, TLM objective otherwise.
@@ -1137,8 +1240,9 @@ class Trainer(object):
                 logger,
                 [("masked source", x.transpose(0, 1))],
                 self.data["dico"],
-                self.params.roberta_mode,
+                self.params.tokenization_mode,
                 "Training",
+                self.params.sentencepiece_model_path,
             )
 
         # cuda
@@ -1166,7 +1270,24 @@ class Trainer(object):
         self.stats["processed_s"] += lengths.size(0)
         self.stats["processed_w"] += pred_mask.sum().item()
 
-    def classif_step(self, lang1, lang2, lambda_coeff):
+
+class SingleTrainer(Trainer):
+    def __init__(self, model, data, params, classifier=None) -> None:
+
+        self.MODEL_NAMES = ["model"]
+        if classifier is not None:
+            self.MODEL_NAMES.append("classifier")
+
+        # model / data / params
+        self.model = model
+        self.data = data
+        self.params = params
+        if classifier is not None:
+            self.classifier = [classifier]
+
+        super().__init__(data, params, self.MODEL_NAMES)
+
+    def classif_step(self, lang1: str, lang2: str, lambda_coeff: float) -> None:
         """
         Masked word prediction step.
         MLM objective is lang2 is None, TLM objective otherwise.
@@ -1212,25 +1333,8 @@ class Trainer(object):
         self.stats["processed_w"] += (len2 - 1).sum().item()
 
 
-class SingleTrainer(Trainer):
-    def __init__(self, model, data, params, classifier=None):
-
-        self.MODEL_NAMES = ["model"]
-        if classifier is not None:
-            self.MODEL_NAMES.append("classifier")
-
-        # model / data / params
-        self.model = model
-        self.data = data
-        self.params = params
-        if classifier is not None:
-            self.classifier = [classifier]
-
-        super().__init__(data, params, self.MODEL_NAMES)
-
-
 class EncDecTrainer(Trainer):
-    def __init__(self, encoder, decoder, data, params, second_decoder=None):
+    def __init__(self, encoder, decoder, data, params, second_decoder=None) -> None:
 
         self.MODEL_NAMES = ["encoder", "decoder"]
         # if second_decoder is not None:
@@ -1269,13 +1373,6 @@ class EncDecTrainer(Trainer):
         params = self.params
         self.train_mode()
 
-        lang1_id = params.lang2id[lang1]
-        lang2_id = params.lang2id[lang2]
-
-        decoder = (
-            self.decoder[lang2_id] if params.separate_decoders else self.decoder[0]
-        )
-
         spans = None
         # generate batch
         if lang1 == lang2:
@@ -1292,44 +1389,222 @@ class EncDecTrainer(Trainer):
         elif deobfuscate:
             (x1, len1, _, _), (x2, len2, _, _) = self.get_batch("mt", lang1, lang2)
             (x1, len1, x2, len2) = self.deobfuscate_by_variable(
-                x1, x2, deobfuscate_p, params.roberta_mode, rng=None
+                x1, x2, deobfuscate_p, params.tokenization_mode == "roberta", rng=None
             )
             if x1 is None:
                 return
         else:
             (x1, len1, _, _), (x2, len2, _, _) = self.get_batch("mt", lang1, lang2)
 
+        loss = self.mt_train_step(
+            x1, len1, lang1, x2, len2, lang2, spans, lambda_coeff, params, show_example
+        )
+
+        if deobfuscate:
+            self.stats[("DO-%s-%s" % (lang1, lang2))].append(loss.item())
+        else:
+            key = (lang1, lang2) if span is None else (lang1, lang2, span)
+            self.stats[
+                ("AE-%s" % lang1) if lang1 == lang2 else ("MT-%s" % "-".join(key))
+            ].append(loss.item())
+
+    def ae_step(
+        self, lang1, lang2, lambda_coeff, show_example=False,
+    ):
+        """
+        Denoising auto-encoding steps
+        If lang2 is not None, the lang2 sentences will be concatenated to the lang1 sentences
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        # assert deobfuscate or span is not None
+        params = self.params
+        self.train_mode()
+
+        # generate batch
+        if lang2 is None:
+            (x1, len1, _, _) = self.get_batch("ae", lang1)
+            (x2, len2) = (x1, len1)
+            (x1, len1) = add_noise(x1, len1, self.params, len(self.data["dico"]) - 1)
+            positions_in = positions_out = None
+            langs_in = langs_out = None
+            lang2 = lang1
+        else:
+            (x1, len1, _, _), (x2, len2, _, _) = self.get_batch("tae", lang1, lang2)
+            lang1_id = params.lang2id[lang1]
+            lang2_id = params.lang2id[lang2]
+
+            x_out, len_out, positions_out, langs_out = concat_batches(
+                x1,
+                len1,
+                lang1_id,
+                x2,
+                len2,
+                lang2_id,
+                params.pad_index,
+                params.eos_index,
+                reset_positions=False,
+            )
+            x1, len1 = add_noise(x1, len1, self.params, len(self.data["dico"]) - 1)
+            x2, len2 = add_noise(x2, len2, self.params, len(self.data["dico"]) - 1)
+            x1, len1, positions_in, langs_in = concat_batches(
+                x1,
+                len1,
+                lang1_id,
+                x2,
+                len2,
+                lang2_id,
+                params.pad_index,
+                params.eos_index,
+                reset_positions=False,
+            )
+            x2, len2 = x_out, len_out
+            selection_mask = (len1 < params.max_len) & (len2 < params.max_len)
+            if not selection_mask.any().item():
+                logger.info(
+                    f"GPU: {self.params.global_rank}. Nothing matching the mask"
+                )
+                x1 = torch.tensor([self.data["dico"].eos_index] * 2)[:, None]
+                x2 = torch.tensor([self.data["dico"].eos_index] * 2)[:, None]
+                len1 = torch.ones(1) * 2
+                len2 = torch.ones(1) * 2
+                positions_in = None
+                positions_out = None
+                langs_in = torch.zeros_like(x1).fill_(lang1_id)
+                langs_out = torch.zeros_like(x2).fill_(lang2_id)
+            else:
+                len1 = len1[selection_mask]
+                len2 = len2[selection_mask]
+                x1 = x1[: len1.max(), selection_mask]
+                positions_in = positions_in[: len1.max(), selection_mask]
+                langs_in = langs_in[: len1.max(), selection_mask]
+                x2 = x2[: len2.max(), selection_mask]
+                positions_out = positions_out[: len2.max(), selection_mask]
+                langs_out = langs_out[: len2.max(), selection_mask]
+        loss = self.mt_train_step(
+            x1,
+            len1,
+            lang1,
+            x2,
+            len2,
+            lang2,
+            spans=None,
+            lambda_coeff=lambda_coeff,
+            params=params,
+            show_example=show_example,
+            positions_in=positions_in,
+            positions_out=positions_out,
+            langs_in=langs_in,
+            langs_out=langs_out,
+        )
+
+        self.stats[
+            ("AE-%s" % lang1)
+            if lang2 == lang1
+            else ("TAE-%s" % "-".join((lang1, lang2)))
+        ].append(loss.item())
+
+    def dobf_step(
+        self, lang1, lang2, lambda_coeff, deobfuscate_p=None, show_example=False,
+    ):
+        """
+        Deobfuscation steps
+        Obfuscates a ratio deobfuscate_p of identifiers and trains to retrieve the dictionary
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        assert deobfuscate_p is not None and 0 <= deobfuscate_p and deobfuscate_p <= 1
+        # assert deobfuscate or span is not None
+        params = self.params
+        self.train_mode()
+
+        spans = None
+        # generate batch
+        (x1, len1, _, _), (x2, len2, _, _) = self.get_batch("mt", lang1, lang2)
+        (x1, len1, x2, len2) = self.deobfuscate_by_variable(
+            x1, x2, deobfuscate_p, params.tokenization_mode == "roberta", rng=None
+        )
+        if x1 is None:
+            return
+
+        loss = self.mt_train_step(
+            x1, len1, lang1, x2, len2, lang2, spans, lambda_coeff, params, show_example
+        )
+
+        self.stats[("DO-%s-%s" % (lang1, lang2))].append(loss.item())
+
+    def mt_train_step(
+        self,
+        x1,
+        len1,
+        lang1,
+        x2,
+        len2,
+        lang2,
+        spans,
+        lambda_coeff,
+        params,
+        show_example,
+        positions_in=None,
+        positions_out=None,
+        langs_in=None,
+        langs_out=None,
+    ):
+        """
+        Common training steps for all steps doing a form of machine translation
+        Positions and langs are inferred if not given
+        """
+        lang1_id = params.lang2id[lang1]
+        lang2_id = params.lang2id[lang2]
+        decoder = (
+            self.decoder[lang2_id] if params.separate_decoders else self.decoder[0]
+        )
         # log first batch of training
         if show_example:
             show_batch(
                 logger,
                 [("source", x1.transpose(0, 1)), ("target", x2.transpose(0, 1))],
                 self.data["dico"],
-                self.params.roberta_mode,
+                self.params.tokenization_mode,
                 f"Train {lang1}-{lang2}",
+                self.params.sentencepiece_model_path,
             )
-
-        langs1 = x1.clone().fill_(lang1_id)
-        langs2 = x2.clone().fill_(lang2_id)
-
+        langs1 = x1.clone().fill_(lang1_id) if langs_in is None else langs_in
+        langs2 = x2.clone().fill_(lang2_id) if langs_out is None else langs_out
         # target words to predict
         alen = torch.arange(len2.max(), dtype=torch.long, device=len2.device)
         # do not predict anything given the last target word
         pred_mask = alen[:, None] < len2[None] - 1
         y = x2[1:].masked_select(pred_mask[:-1])
         assert len(y) == (len2 - 1).sum().item()
-
         # cuda
-        x1, len1, langs1, x2, len2, langs2, y, spans = to_cuda(
-            x1, len1, langs1, x2, len2, langs2, y, spans
+        (
+            x1,
+            len1,
+            langs1,
+            x2,
+            len2,
+            langs2,
+            y,
+            spans,
+            positions_in,
+            positions_out,
+        ) = to_cuda(
+            x1, len1, langs1, x2, len2, langs2, y, spans, positions_in, positions_out
         )
-
         # encode source sentence
         enc1 = self.encoder[0](
-            "fwd", x=x1, lengths=len1, langs=langs1, causal=False, spans=spans
+            "fwd",
+            x=x1,
+            lengths=len1,
+            langs=langs1,
+            causal=False,
+            spans=spans,
+            positions=positions_in,
         )
         enc1 = enc1.transpose(0, 1)
-
         # decode target sentence
         dec2 = decoder(
             "fwd",
@@ -1340,36 +1615,27 @@ class EncDecTrainer(Trainer):
             src_enc=enc1,
             src_len=len1,
             spans=spans,
+            positions=positions_out,
         )
-
         # loss
         _, loss = decoder(
             "predict", tensor=dec2, pred_mask=pred_mask, y=y, get_scores=False
         )
-
-        if deobfuscate:
-            self.stats[("DO-%s-%s" % (lang1, lang2))].append(loss.item())
-        else:
-            key = (lang1, lang2) if span is None else (lang1, lang2, span)
-            self.stats[
-                ("AE-%s" % lang1) if lang1 == lang2 else ("MT-%s" % "-".join(key))
-            ].append(loss.item())
         loss = lambda_coeff * loss
-
         # optimize
         self.optimize(loss)
-
         # number of processed sentences / words
         self.n_sentences += params.batch_size
         self.stats["processed_s"] += len2.size(0)
         self.stats["processed_w"] += (len2 - 1).sum().item()
+        return loss
 
-    def train_mode(self):
+    def train_mode(self) -> None:
         [enc.train() for enc in self.encoder]
         if self.decoder is not None:
             [dec.train() for dec in self.decoder]
 
-    def eval_mode(self):
+    def eval_mode(self) -> None:
         [enc.eval() for enc in self.encoder]
         if self.decoder is not None:
             [dec.eval() for dec in self.decoder]
@@ -1417,7 +1683,7 @@ class EncDecTrainer(Trainer):
             enc1 = _encoder("fwd", x=x1, lengths=len1, langs=langs1, causal=False)
             enc1 = enc1.transpose(0, 1)
 
-            len_v = (3 * len1 + 10).clamp(max=params.max_len)
+            len_v = (3 * len1 + 10).clamp(max=params.bt_max_len)
             if self.params.fp16:
                 enc1 = enc1.half()
             x2, len2 = _decoder_lang2.generate(
@@ -1444,8 +1710,9 @@ class EncDecTrainer(Trainer):
                     ("Target (x1)", x1.transpose(0, 1)),
                 ],
                 self.data["dico"],
-                self.params.roberta_mode,
+                self.params.tokenization_mode,
                 f"BT {lang1}-{lang2}",
+                self.params.sentencepiece_model_path,
             )
 
         # encode generated sentence
@@ -1563,7 +1830,11 @@ class EncDecTrainer(Trainer):
             assert x1.shape[1] == len(len1) == id1.shape[1] == len(lenid1)
             sent_ids = convert_to_text(id1, lenid1, dico, params)
             sent_ids = [
-                restore_segmentation_sentence(i, roberta_mode=params.roberta_mode)
+                restore_segmentation_sentence(
+                    i,
+                    tokenization_mode=params.tokenization_mode,
+                    sentencepiece_model_path=params.sentencepiece_model_path,
+                )
                 for i in sent_ids
             ]
             langs1 = x1.clone().fill_(lang1_id)
@@ -1755,7 +2026,9 @@ class EncDecTrainer(Trainer):
             )
             text_hypotheses = [
                 [
-                    restore_segmentation_sentence(sent, params.roberta_mode)
+                    restore_segmentation_sentence(
+                        sent, params.tokenization_mode, params.sentencepiece_model_path
+                    )
                     for sent in hyps
                 ]
                 for hyps in text_hypotheses
@@ -1866,8 +2139,9 @@ class EncDecTrainer(Trainer):
                     ("Generated Target", x2.transpose(0, 1)),
                 ],
                 dico,
-                self.params.roberta_mode,
+                self.params.tokenization_mode,
                 f"ST {lang1}:{lang1}-{lang2}",
+                self.params.sentencepiece_model_path,
             )
         # Train on lang1 -> lang2
         loss1 = self.get_st_loss(
@@ -1898,12 +2172,23 @@ class EncDecTrainer(Trainer):
                 f" ({self.st_translation_stats[key]['successful']} / {self.st_translation_stats[key]['failed']})"
             )
 
-    def get_st_loss(self, decoder, x1, len1, langs1, x2, len2, langs2):
+    def get_st_loss(
+        self,
+        decoder: torch.nn.Module,
+        x1: LTensor,
+        len1: LTensor,
+        langs1,
+        x2: LTensor,
+        len2: LTensor,
+        langs2,
+    ):
         # encode generated sentence
         enc1 = self.encoder[0]("fwd", x=x1, lengths=len1, langs=langs1, causal=False)
         enc1 = enc1.transpose(0, 1)
         # words to predict
-        alen = torch.arange(len2.max(), dtype=torch.long, device=len1.device)
+        alen = torch.arange(  # type: ignore
+            len2.max(), dtype=torch.long, device=len1.device
+        )
         # do not predict anything given the last target word
         pred_mask = alen[:, None] < len2[None] - 1
         y2 = x2[1:].masked_select(pred_mask[:-1])

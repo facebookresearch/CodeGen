@@ -15,7 +15,7 @@ from codegen_sources.preprocessing.utils import split_arguments
 
 
 class EvosuiteTranslator:
-    def __init__(self):
+    def __init__(self) -> None:
         self.primitive_types = {
             "short",
             "int",

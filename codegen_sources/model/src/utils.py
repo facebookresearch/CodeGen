@@ -14,37 +14,41 @@ import random
 import re
 import subprocess
 import sys
-from pathlib import Path, PosixPath
-
-import psutil
+import typing as tp
+from pathlib import Path
 
 import numpy as np
+import psutil
+import sentencepiece  # type: ignore
 import torch
 from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
 
+from multixp.common.utils import PathLike
+from .constants import (
+    SUPPORTED_LANGUAGES_FOR_TESTS,
+    FALSY_STRINGS,
+    TRUTHY_STRINGS,
+    TOKENIZATION_MODES,
+)
 from .data.dictionary import NUM_SPECIAL_TOKENS
+
+TOK_AVOID_NEWLINE = "#NEWLINE"
+
+LTensor = torch.LongTensor
 
 REPO_ROOT = Path(__file__).parents[3].absolute()
 sys.path.append(str(REPO_ROOT))
 print("adding to path", str(REPO_ROOT))
-TREE_SITTER_ROOT = Path(__file__).parents[3].joinpath("tree-sitter")
-import codegen_sources.preprocessing.lang_processors.cpp_processor
-import codegen_sources.preprocessing.lang_processors.java_processor
-import codegen_sources.preprocessing.lang_processors.python_processor
-from codegen_sources.test_generation.test_runners.evosuite_test_runners import (
-    SUPPORTED_LANGUAGES_FOR_TESTS,
-)
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
-from .logger import create_logger
+# from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
 
-FALSY_STRINGS = {"off", "false", "0"}
-TRUTHY_STRINGS = {"on", "true", "1"}
+from .logger import create_logger
 
 DUMP_PATH = "/checkpoint/%s/dumped" % getpass.getuser()
 dynamic_coeff = [
     "lambda_clm",
     "lambda_mlm",
     "lambda_ae",
+    "lambda_tae",
     "lambda_mt",
     "lambda_bt",
     "lambda_st",
@@ -58,10 +62,15 @@ dynamic_coeff = [
     "st_min_mutation_score",
 ]
 
-MAX_VIRTUAL_MEMORY = 2 * 1024 * 1024 * 1024  # 2 GB
 
-
-def show_batch(logger, to_print, dico, roberta_mode, example_type):
+def show_batch(
+    logger,
+    to_print,
+    dico,
+    tokenization_mode,
+    example_type,
+    sentencepiece_model_path: tp.Optional[PathLike] = None,
+):
 
     """
     log first element of batch.
@@ -75,7 +84,7 @@ def show_batch(logger, to_print, dico, roberta_mode, example_type):
             [dico.id2word[int(w)] for w in x[0] if w != dico.pad_index]
         )
         logger.info(
-            f"{label} sent: {restore_segmentation_sentence(source_sentence, roberta_mode)}"
+            f"{label} sent: {restore_segmentation_sentence(source_sentence, tokenization_mode, sentencepiece_model_path)}"
         )
     logger.info("")
     for label, x in to_print:
@@ -110,15 +119,13 @@ def batch_sentences(sentences, pad_index, eos_index):
     return sent, lengths
 
 
-def limit_virtual_memory(max_virtual_memory):
-    # We do a soft limit in order to be able to change the limit later if needed
-    return f"ulimit -S -v {max_virtual_memory}"
-
-
 class AttrDict(dict):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: tp.Any, **kwargs: tp.Any) -> None:
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
+
+    def __getattr__(self, name: str) -> tp.Any:  # deactivates mypy checks
+        raise RuntimeError
 
 
 def read_file_lines(hyp_path):
@@ -218,35 +225,57 @@ def get_dump_path(params):
         subprocess.Popen("mkdir -p %s" % params.dump_path, shell=True).wait()
 
 
-def to_cuda(*args):
+# cant be typed since we cant map inputs to outputs
+def to_cuda(*args: tp.Union[None, torch.Tensor, torch.LongTensor]) -> tp.List[tp.Any]:
     """
     Move tensors to CUDA.
     """
     return [None if x is None else x.cuda() for x in args]
 
 
-def restore_segmentation_sentence(sentence, roberta_mode):
+def restore_segmentation_sentence(
+    sentence: str,
+    tokenization_mode: str = "fastbpe",
+    sentencepiece_model_path: tp.Optional[PathLike] = None,
+) -> str:
     """
     Take a sentence segmented with BPE and restore it to its original segmentation.
     """
-    if roberta_mode:
+    assert tokenization_mode in TOKENIZATION_MODES
+    if tokenization_mode == "fastbpe":
+        return sentence.replace("@@ ", "")
+    elif tokenization_mode == "roberta":
         return restore_roberta_segmentation_sentence(sentence)
     else:
-        return sentence.replace("@@ ", "")
+        assert sentencepiece_model_path is not None
+        model = sentencepiece.SentencePieceProcessor(str(sentencepiece_model_path))
+        return model.decode_pieces(sentence.split(" "))
 
 
-def restore_segmentation(path, roberta_mode=False, single_line=False):
+def restore_segmentation(
+    path,
+    tokenization_mode: str = "fastbpe",
+    single_line=False,
+    sentencepiece_model_path: tp.Optional[PathLike] = None,
+):
     """
     Take a file segmented with BPE and restore it to its original segmentation.
     """
+    assert tokenization_mode in TOKENIZATION_MODES
     assert os.path.isfile(path)
-    if not roberta_mode:
+    if tokenization_mode == "fastbpe":
         restore_fastBPE_segmentation(path)
-    else:
+    elif tokenization_mode == "roberta":
         return restore_roberta_segmentation(path, single_line=single_line)
+    else:
+        assert sentencepiece_model_path is not None
+
+        return restore_sentencepiece_segmentation(
+            path, sentencepiece_model_path, single_line=single_line
+        )
 
 
-def restore_roberta_segmentation(path, single_line=False):
+def restore_roberta_segmentation(path: str, single_line: bool = False) -> None:
     with open(path, "r", encoding="utf-8", errors="replace") as input_file:
         text_inputs = input_file.read().split("\n")
     output = restore_roberta_segmentation_string(text_inputs, single_line)
@@ -254,7 +283,9 @@ def restore_roberta_segmentation(path, single_line=False):
         output_path.write(output)
 
 
-def restore_roberta_segmentation_string(text_inputs, single_line=False):
+def restore_roberta_segmentation_string(
+    text_inputs: tp.Union[str, tp.List[str]], single_line: bool = False
+) -> str:
     if isinstance(text_inputs, str):
         text_inputs = text_inputs.splitlines()
     output_lines = [
@@ -264,15 +295,39 @@ def restore_roberta_segmentation_string(text_inputs, single_line=False):
     return "\n".join(output_lines)
 
 
-def restore_roberta_segmentation_sentence(line, single_line=False):
+def restore_roberta_segmentation_sentence(line: str, single_line: bool = False):
     byte_encoder = bytes_to_unicode()
     byte_decoder = {v: k for k, v in byte_encoder.items()}
     text = "".join(line.replace(" ", ""))
     res = bytearray([byte_decoder[c] for c in text]).decode("utf-8", errors="replace")
-    return res.replace("\n", "#NEWLINE") if single_line else res
+    return res.replace("\n", TOK_AVOID_NEWLINE) if single_line else res
 
 
-def restore_fastBPE_segmentation(path):
+def restore_sentencepiece_segmentation(
+    path: str, sentencepiece_model_path: PathLike, single_line: bool = False,
+) -> None:
+    model = sentencepiece.SentencePieceProcessor(str(sentencepiece_model_path))
+    with open(path, "r", encoding="utf-8", errors="replace") as input_file:
+        text_inputs = input_file.read().split("\n")
+    output = restore_sentencepiece_segmentation_string(text_inputs, model, single_line)
+    with open(path, "w") as output_path:
+        output_path.write(output)
+
+
+def restore_sentencepiece_segmentation_string(
+    text_inputs: tp.Union[str, tp.List[str]],
+    model: sentencepiece.SentencePieceProcessor,
+    single_line: bool = False,
+) -> str:
+    if isinstance(text_inputs, str):
+        text_inputs = text_inputs.splitlines()
+    output_lines = [model.decode_pieces(line.split(" ")) for line in text_inputs]
+    if single_line:
+        output_lines = [line.replace("\n", TOK_AVOID_NEWLINE) for line in output_lines]
+    return "\n".join(output_lines)
+
+
+def restore_fastBPE_segmentation(path: str) -> None:
     restore_cmd = "sed -i -r 's/(@@ )|(@@ ?$)//g' %s"
     subprocess.Popen(restore_cmd % path, shell=True).wait()
 
@@ -336,7 +391,7 @@ def parse_lambda_config(params):
             setattr(params, name + "_config", [(int(k), float(v)) for k, v in split])
 
 
-def get_lambda_value(config, n_iter):
+def get_lambda_value(config, n_iter: int) -> float:
     """
     Compute a lambda value according to its schedule configuration.
     """
@@ -399,8 +454,16 @@ def set_sampling_probs(data, params):
 
 
 def concat_batches(
-    x1, len1, lang1_id, x2, len2, lang2_id, pad_idx, eos_idx, reset_positions
-):
+    x1: LTensor,
+    len1: LTensor,
+    lang1_id: int,
+    x2: LTensor,
+    len2: LTensor,
+    lang2_id: int,
+    pad_idx: int,
+    eos_idx: int,
+    reset_positions: bool,
+) -> tp.Tuple[LTensor, LTensor, LTensor, LTensor]:
     """
     Concat batches with different languages.
     """
@@ -411,29 +474,32 @@ def concat_batches(
     slen, bs = lengths.max().item(), lengths.size(0)
 
     x = x1.new(slen, bs).fill_(pad_idx)
-    x[: len1.max().item()].copy_(x1)
+    x[: int(len1.max().item())].copy_(x1)
     positions = torch.arange(slen)[:, None].repeat(1, bs).to(x1.device)
     langs = x1.new(slen, bs).fill_(lang1_id)
 
     for i in range(bs):
-        l1 = len1[i] if reset_positions else len1[i] - 1
-        x[l1 : l1 + len2[i], i].copy_(x2[: len2[i], i])
+        l1 = int(len1[i] if reset_positions else len1[i] - 1)
+        l2 = int(len2[i])
+        x[l1 : l1 + l2, i].copy_(x2[:l2, i])
         if reset_positions:
             positions[l1:, i] -= len1[i]
         langs[l1:, i] = lang2_id
 
     assert (x == eos_idx).long().sum().item() == (4 if reset_positions else 3) * bs
 
-    return x, lengths, positions, langs
+    return x, lengths, positions, langs  # type: ignore
 
 
-def truncate(x, lengths, max_len, eos_index):
+def truncate(
+    x: LTensor, lengths: LTensor, max_len: int, eos_index: int
+) -> tp.Tuple[LTensor, LTensor]:
     """
     Truncate long sentences.
     """
     if lengths.max().item() > max_len:
-        x = x[:max_len].clone()
-        lengths = lengths.clone()
+        x = x[:max_len].clone()  # type: ignore
+        lengths = lengths.clone()  # type: ignore
         for i in range(len(lengths)):
             if lengths[i] > max_len:
                 lengths[i] = max_len
@@ -496,298 +562,6 @@ def shuf_order(langs, params=None, n=5):
 
     assert len(s_mono) + len(s_para) > 0
     return [(lang, None) for lang in s_mono] + s_para
-
-
-def vizualize_translated_files(
-    lang1, lang2, src_file, hyp_file, ids, ref_file=None, out_file=None
-):
-    lang1_processor = LangProcessor.processors[lang1.split("_")[0]](
-        root_folder=TREE_SITTER_ROOT
-    )
-    lang2_processor = LangProcessor.processors[lang2.split("_")[0]](
-        root_folder=TREE_SITTER_ROOT
-    )
-    src_viz = str(Path(src_file).with_suffix(".vizualize.txt"))
-    hyp_viz = str(
-        Path(re.sub("beam\d", "", hyp_file[0])).with_suffix(".vizualize.txt.tmp")
-    )
-    if ref_file is None:
-        ref_viz = str(Path("ref_tmp").with_suffix(".vizualize.txt"))
-    else:
-        ref_viz = str(Path(ref_file).with_suffix(".vizualize.txt"))
-    if out_file is None:
-        out_viz = str(Path("out_tmp").with_suffix(".vizualize.txt"))
-    else:
-        out_viz = str(
-            Path(re.sub("beam\d", "", out_file[0])).with_suffix(".vizualize.txt")
-        )
-
-    ids = open(ids, "r", encoding="utf-8").readlines()
-
-    hyp_lines = list(
-        zip(*[read_file_lines(path) for path in hyp_file])
-    )  # test_size * beam_size
-    beam_size = len(hyp_lines[0])
-
-    with open(src_file, encoding="utf-8") as f:
-        src_lines = f.readlines()  # test_size
-
-    if ref_file is not None:
-        with open(ref_file, encoding="utf-8") as f:
-            ref_lines = f.readlines()  # test_size
-    else:
-        ref_lines = ["" for _ in range(len(src_lines))]
-
-    if out_file is not None:
-        out_lines = list(
-            zip(*[read_file_lines(path) for path in out_file])
-        )  # test_size * beam_size
-    else:
-        out_lines = [
-            ["" for n in range(len(hyp_lines[0]))] for l in range(len(src_lines))
-        ]
-
-    with open(src_viz, "w", encoding="utf-8") as src_vizf:
-        with open(hyp_viz, "w", encoding="utf-8") as hyp_vizf:
-            with open(ref_viz, "w", encoding="utf-8") as ref_vizf:
-                with open(out_viz, "w", encoding="utf-8") as out_vizf:
-                    src_vizf.write(
-                        "========================SOURCE============================\n"
-                    )
-                    hyp_vizf.write(
-                        "=========================HYPO=============================\n"
-                    )
-                    ref_vizf.write(
-                        "==========================REF=============================\n"
-                    )
-                    out_vizf.write(
-                        "==========================OUT=============================\n"
-                    )
-
-                    for src, hyps, ref, outs, i in zip(
-                        src_lines, hyp_lines, ref_lines, out_lines, ids
-                    ):
-                        src_vizf.write(
-                            "=========================================================\n"
-                        )
-                        hyp_vizf.write(
-                            "=========================================================\n"
-                        )
-                        ref_vizf.write(
-                            "=========================================================\n"
-                        )
-                        out_vizf.write(
-                            "=========================================================\n"
-                        )
-                        src_vizf.write(f"{i}")
-                        hyp_vizf.write(f"{i}")
-                        ref_vizf.write(f"{i}")
-                        out_vizf.write(f"{i}")
-                        src_vizf.write("--\n")
-                        hyp_vizf.write("--\n")
-                        ref_vizf.write("--\n")
-                        out_vizf.write("--\n")
-
-                        try:
-                            src = lang1_processor.detokenize_code(src)
-                            src_vizf.write(src)
-                        except:
-                            src = "".join(
-                                [
-                                    c if (i + 1) % 50 != 0 else c + "\n"
-                                    for i, c in enumerate(src)
-                                ]
-                            )
-                            src_vizf.write(src)
-
-                        try:
-                            ref = lang2_processor.detokenize_code(ref)
-                            ref_vizf.write(ref)
-                        except:
-                            ref = "".join(
-                                [
-                                    c if (i + 1) % 50 != 0 else c + "\n"
-                                    for i, c in enumerate(ref)
-                                ]
-                            )
-                            ref_vizf.write(ref)
-
-                        for i in range(beam_size):
-                            hyp = hyps[i]
-                            out = outs[i]
-                            try:
-                                hyp = lang2_processor.detokenize_code(hyp)
-                                hyp_vizf.write(hyp)
-                            except:
-                                hyp = "".join(
-                                    [
-                                        c if (i + 1) % 50 != 0 else c + "\n"
-                                        for i, c in enumerate(hyp)
-                                    ]
-                                )
-                                hyp_vizf.write(hyp)
-
-                            out = "".join(
-                                [
-                                    c if (i + 1) % 50 != 0 else c + "\n"
-                                    for i, c in enumerate(out)
-                                ]
-                            )
-                            out_vizf.write(out)
-
-                            if i == 0:
-                                maximum = max(
-                                    len(src.split("\n")),
-                                    len(hyp.split("\n")),
-                                    len(ref.split("\n")),
-                                    len(out.split("\n")),
-                                )
-                                for i in range(len(src.split("\n")), maximum):
-                                    src_vizf.write("\n")
-                                for i in range(len(hyp.split("\n")), maximum):
-                                    hyp_vizf.write("\n")
-                                for i in range(len(ref.split("\n")), maximum):
-                                    ref_vizf.write("\n")
-                                for i in range(len(out.split("\n")), maximum):
-                                    out_vizf.write("\n")
-                            else:
-                                maximum = max(
-                                    len(hyp.split("\n")), len(out.split("\n"))
-                                )
-                                for i in range(maximum - 1):
-                                    src_vizf.write("\n")
-                                for i in range(maximum - 1):
-                                    ref_vizf.write("\n")
-                                for i in range(len(hyp.split("\n")), maximum):
-                                    hyp_vizf.write("\n")
-                                for i in range(len(out.split("\n")), maximum):
-                                    out_vizf.write("\n")
-                            src_vizf.write("-\n")
-                            hyp_vizf.write("-\n")
-                            ref_vizf.write("-\n")
-                            out_vizf.write("-\n")
-
-                        src_vizf.write("--\n\n")
-                        hyp_vizf.write("--\n\n")
-                        ref_vizf.write("--\n\n")
-                        out_vizf.write("--\n\n")
-
-    command = (
-        f"pr -w 250 -m -t {src_viz} {ref_viz} {hyp_viz} {out_viz} > {hyp_viz[:-4]}"
-    )
-    subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ).wait()
-
-    os.remove(src_viz)
-    os.remove(ref_viz)
-    os.remove(hyp_viz)
-    os.remove(out_viz)
-
-
-def vizualize_do_files(lang1, src_file, ref_file, hyp_file):
-    lang1_processor = LangProcessor.processors[lang1.split("_")[0]](
-        root_folder=TREE_SITTER_ROOT
-    )
-    src_viz = str(Path(src_file).with_suffix(".vizualize.txt"))
-    hyp_viz = str(
-        Path(re.sub("beam\d", "", hyp_file[0])).with_suffix(".vizualize.txt.tmp")
-    )
-    ref_viz = str(Path(ref_file).with_suffix(".vizualize.txt"))
-
-    hyp_lines = list(
-        zip(*[read_file_lines(path) for path in hyp_file])
-    )  # test_size * beam_size
-    beam_size = len(hyp_lines[0])
-
-    with open(src_file, encoding="utf-8") as f:
-        src_lines = f.readlines()  # test_size
-
-    with open(ref_file, encoding="utf-8") as f:
-        ref_lines = f.readlines()  # test_size
-
-    with open(src_viz, "w", encoding="utf-8") as src_vizf:
-        with open(hyp_viz, "w", encoding="utf-8") as hyp_vizf:
-            with open(ref_viz, "w", encoding="utf-8") as ref_vizf:
-                src_vizf.write(
-                    "========================SOURCE============================\n"
-                )
-                hyp_vizf.write(
-                    "=========================HYPO=============================\n"
-                )
-                ref_vizf.write(
-                    "==========================REF=============================\n"
-                )
-
-                for src, hyps, ref in zip(src_lines, hyp_lines, ref_lines):
-                    src_vizf.write(
-                        "=========================================================\n"
-                    )
-                    hyp_vizf.write(
-                        "=========================================================\n"
-                    )
-                    ref_vizf.write(
-                        "=========================================================\n"
-                    )
-                    try:
-                        src = lang1_processor.detokenize_code(src)
-                        src_vizf.write(src)
-                    except:
-                        src = "".join(
-                            [
-                                c if (i + 1) % 50 != 0 else c + "\n"
-                                for i, c in enumerate(src)
-                            ]
-                        )
-                        src_vizf.write(src)
-
-                    ref = ref.replace("|", "\n").strip()
-                    ref_vizf.write(ref)
-
-                    for i in range(beam_size):
-                        hyp = hyps[i]
-                        hyp = hyp.replace("|", "\n").strip()
-                        hyp_vizf.write(hyp)
-                        if i == 0:
-                            maximum = max(
-                                len(src.split("\n")),
-                                len(hyp.split("\n")),
-                                len(ref.split("\n")),
-                            )
-                            for i in range(len(src.split("\n")), maximum):
-                                src_vizf.write("\n")
-                            for i in range(len(hyp.split("\n")), maximum):
-                                hyp_vizf.write("\n")
-                            for i in range(len(ref.split("\n")), maximum):
-                                ref_vizf.write("\n")
-                        else:
-                            maximum = max(
-                                len(src.split("\n")),
-                                len(hyp.split("\n")),
-                                len(ref.split("\n")),
-                            )
-                            for i in range(maximum - 1):
-                                src_vizf.write("\n")
-                            for i in range(maximum - 1):
-                                ref_vizf.write("\n")
-                            for i in range(len(hyp.split("\n")), maximum):
-                                hyp_vizf.write("\n")
-                        src_vizf.write("-\n")
-                        hyp_vizf.write("-\n")
-                        ref_vizf.write("-\n")
-
-                    src_vizf.write("--\n\n")
-                    hyp_vizf.write("--\n\n")
-                    ref_vizf.write("--\n\n")
-
-    command = f"pr -w 250 -m -t {src_viz} {ref_viz} {hyp_viz} > {hyp_viz[:-4]}"
-    subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ).wait()
-
-    os.remove(src_viz)
-    os.remove(ref_viz)
-    os.remove(hyp_viz)
 
 
 def set_MKL_env_vars():
@@ -1075,6 +849,8 @@ def convert_to_text(batch, lengths, dico, params, generate_several_reps=False):
 
 
 def get_programming_language_name(lang):
+    if "_ir_" in lang:
+        return "ir"
     if lang in SUPPORTED_LANGUAGES_FOR_TESTS:
         return lang
     elif lang.split("_")[0] in SUPPORTED_LANGUAGES_FOR_TESTS:
@@ -1084,59 +860,6 @@ def get_programming_language_name(lang):
             f"The language {lang} is not supported for unit tests self-training. "
             f"The supported languages are {SUPPORTED_LANGUAGES_FOR_TESTS}"
         )
-
-
-def get_java_compilation_errors(code, timeout=20):
-    file = write_java_function(code)
-    comp_cmd = f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; {os.path.join(get_java_bin_path(), 'javac')} {file}"
-    timed_out = False
-    try:
-        proc = subprocess.run(
-            comp_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            executable="/bin/bash",
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return "timeout"
-    file.unlink()
-    classfile = file.with_suffix(".class")
-    assert (
-        timed_out or proc.returncode != 0 or classfile.is_file()
-    ), "compilation succeeded but .class file does not exist"
-    assert "tmp_folder" in str(file.parent), file.parent
-    for compiled_f in file.parent.glob("*"):
-        compiled_f.unlink()
-    file.parent.rmdir()
-    if timed_out:
-        return "timeout"
-    return "success" if proc.returncode == 0 else proc.stderr.decode()
-
-
-def write_java_function(f: str, out_path: PosixPath = Path("/tmp/java_functions/")):
-    rand_folder = str(random.getrandbits(64))
-    classname = f"JAVA_FUNC"
-    tmp_folder = out_path.joinpath(f"tmp_folder_{rand_folder}")
-    out_file = tmp_folder.joinpath(classname + ".java")
-    tmp_folder.mkdir(parents=True, exist_ok=True)
-    java_processor = LangProcessor.processors["java"](root_folder=TREE_SITTER_ROOT)
-
-    with open(out_file, "w") as writefile:
-        writefile.write(
-            """
-import java.util.*;
-import java.util.stream.*;
-import java.lang.*;
-import javafx.util.Pair;
-"""
-        )
-        writefile.write("public class " + classname + "{\n")
-        code = f.replace("\r", "")
-        writefile.write(java_processor.detokenize_code(code))
-        writefile.write("}\n")
-    return out_file
 
 
 def get_java_bin_path():

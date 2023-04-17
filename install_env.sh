@@ -1,34 +1,30 @@
-conda create --name codeGen_env python=3.6.9
-conda activate codeGen_env
-conda config --add channels conda-forge
-conda config --add channels pytorch
+conda create --name codegen_3_10 python=3.10
+conda activate codegen_3_10
+conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.6 -c pytorch -c conda-forge
+conda install xformers -c xformers/label/dev
 
-conda install pytorch torchvision torchaudio cudatoolkit=11.0 six scikit-learn stringcase transformers ply slimit astunparse submitit
-pip install cython
-cd codegen_sources/model/tools
+pip install -r requirements-notorch.txt
+
+#install fastBPE
 git clone https://github.com/glample/fastBPE.git
-
 cd fastBPE
 g++ -std=c++11 -pthread -O3 fastBPE/main.cc -IfastBPE -o fast
 python setup.py install
-cd ../../../../
+cd ..
 
+# tree-sitter
 mkdir tree-sitter
 cd tree-sitter
 git clone https://github.com/tree-sitter/tree-sitter-cpp.git
 git clone https://github.com/tree-sitter/tree-sitter-java.git
 git clone https://github.com/tree-sitter/tree-sitter-python.git
+git clone https://github.com/tree-sitter/tree-sitter-rust.git
+git clone https://github.com/tree-sitter/tree-sitter-go.git
 cd ..
-
-cd codegen_sources/test_generation/
-wget https://github.com/EvoSuite/evosuite/releases/download/v1.1.0/evosuite-1.1.0.jar
-cd ../..
 
 git clone https://github.com/NVIDIA/apex
 cd apex
 pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 cd ..
 
-pip install sacrebleu=="1.2.11" javalang tree_sitter psutil fastBPE
-pip install hydra-core --upgrade --pre
-pip install black==19.10b0
+go get golang.org/x/tools/cmd/goimports

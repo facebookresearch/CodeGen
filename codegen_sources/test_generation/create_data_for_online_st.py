@@ -8,7 +8,7 @@ import argparse
 
 import fastBPE
 import torch
-from pathlib import Path, PosixPath
+from pathlib import Path
 import pandas as pd
 
 
@@ -18,7 +18,7 @@ LANGUAGES = ["cpp", "java", "python"]
 from logging import getLogger
 
 import numpy as np
-from utils import ROOT_PATH, add_root_to_path
+from utils import ROOT_PATH, add_root_to_path  # type: ignore
 
 add_root_to_path()
 from codegen_sources.model.src.cache import ListCache
@@ -29,7 +29,7 @@ logger = getLogger()
 
 
 class Params:
-    def __init__(self, pad_index=0, eos_index=1):
+    def __init__(self, pad_index=0, eos_index=1) -> None:
         self.pad_index = pad_index
         self.eos_index = eos_index
         self.tokens_per_batch = 1000
@@ -53,7 +53,7 @@ def get_tensors(reloaded_data):
     return out_sentences, lengths
 
 
-def initialize_cache(dataset_path, output_path: PosixPath):
+def initialize_cache(dataset_path, output_path: Path):
     languages = [l + "_sa" for l in LANGUAGES]
     for l1 in languages:
         for l2 in [l for l in languages if l > l1]:

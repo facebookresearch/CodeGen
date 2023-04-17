@@ -5,9 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from codegen_sources.preprocessing.tests.obfuscation.utils import diff_tester
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
 from pathlib import Path
+
+from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
+from codegen_sources.preprocessing.tests.obfuscation.utils import diff_tester
 
 processor = JavaProcessor(root_folder=Path(__file__).parents[4].joinpath("tree-sitter"))
 

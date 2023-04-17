@@ -5,10 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-import pytest
-
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
 from pathlib import Path
+
+from codegen_sources.preprocessing.lang_processors import JavaProcessor
+from codegen_sources.preprocessing.tests.obfuscation.utils import diff_tester
 
 from codegen_sources.preprocessing.tests.tokenization.tokenization_tests_utils import (
     tokenizer_test,
@@ -117,7 +117,6 @@ TESTS.append(
         ["String", "s", "=", '" Hi ▁ I ▁ am \\n Marie "', ";"],
     )
 )
-
 
 TESTS2 = []
 
@@ -316,6 +315,21 @@ TESTS_TOKENIZE_DETOKENIZE_STRING = [
 """,
         """""",
     ),
+    (r"""s . replaceAll ( "\\s+$" , "" ) . split ( " " ) ;""", ""),
+    (
+        r"""import java . util . * ;
+import java . io . * ;
+public class Addition {
+  public static void main ( String [ ] args ) throws IOException {
+    BufferedReader bufferedReader = new BufferedReader ( new InputStreamReader ( System . in ) ) ;
+    String [ ] inputs = bufferedReader . readLine ( ) . replaceAll ( "\\s+$" , "" ) . split ( " " ) ;
+    Integer a = Integer . parseInt ( inputs [ 0 ] ) ;
+    Integer b = Integer . parseInt ( inputs [ 1 ] ) ;
+    System . out . println ( a + b ) ;
+  }
+}""",
+        "",
+    ),
 ]
 
 TESTS_DONT_PROCESS_STRINGS = [
@@ -435,6 +449,63 @@ public class HelloWorld
             "}",
             "}",
         ],
+    )
+]
+
+TESTS_IMPORTS = [
+    (
+        (
+            r"""
+import java.lang.*;
+import javafx.util.Pair;
+public class HelloWorld
+{
+	public void main(String[] args) {
+		System.out.println("Hello \n World!");
+	}
+}""",
+            [
+                "import",
+                "java",
+                ".",
+                "lang",
+                ".",
+                "*",
+                ";",
+                "import",
+                "javafx",
+                ".",
+                "util",
+                ".",
+                "Pair",
+                ";",
+                "public",
+                "class",
+                "HelloWorld",
+                "{",
+                "public",
+                "void",
+                "main",
+                "(",
+                "String",
+                "[",
+                "]",
+                "args",
+                ")",
+                "{",
+                "System",
+                ".",
+                "out",
+                ".",
+                "println",
+                "(",
+                '" Hello ▁ \\n ▁ World ! "',
+                ")",
+                ";",
+                "}",
+                "}",
+            ],
+        )
     )
 ]
 
@@ -665,3 +736,40 @@ def test_extract_java_functions():
         expected_sa, expected_cl = expected_funcs
         compare_funcs(actual_funcs_sa, expected_sa)
         compare_funcs(actual_funcs_cl, expected_cl)
+
+
+def test_extract_java_functions_untokenized():
+    for input_file, expected_funcs in FUNC_EXTRACTION:
+        actual_funcs_sa, actual_funcs_cl = processor.extract_functions(input_file)
+        print(actual_funcs_sa, actual_funcs_cl)
+        expected_sa, expected_cl = expected_funcs
+
+        # check equality after tokenization
+        actual_funcs_sa = [
+            " ".join(processor.tokenize_code(x)) for x in actual_funcs_sa
+        ]
+        actual_funcs_cl = [
+            " ".join(processor.tokenize_code(x)) for x in actual_funcs_cl
+        ]
+        compare_funcs(actual_funcs_sa, expected_sa)
+        compare_funcs(actual_funcs_cl, expected_cl)
+
+
+def test_formatter():
+    input_f = """public static int factorial  (int  n ){ if (n == 0) return 1; return n * factorial(n-1);}"""
+    expected = """public static int factorial(int n) {
+  if (n == 0)
+    return 1;
+  return n * factorial(n - 1);
+}"""
+    actual = processor.format(input_f)
+    diff_tester(expected, actual)
+
+
+def test_formatter_partial_code():
+    input_f = """public static int factorial  (int  n ){ if """
+
+    expected = """public static int factorial(int n) {
+  if"""
+    actual = processor.format(input_f)
+    diff_tester(expected, actual)

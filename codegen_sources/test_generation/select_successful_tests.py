@@ -9,6 +9,7 @@
 # Input sentences must have the same tokenization and BPE codes than the ones used in the model.
 #
 
+import sys
 import argparse
 from logging import getLogger
 from pathlib import Path
@@ -17,9 +18,11 @@ import fastBPE
 import numpy as np
 import pandas as pd
 
-from utils import get_beam_size, add_root_to_path
+root_path = Path(__file__).absolute().parents[2]
+print(f"adding {root_path} to path")
+sys.path.append(str(root_path))
 
-add_root_to_path()
+from codegen_sources.test_generation.utils import get_beam_size
 from codegen_sources.model.preprocess import XLM_preprocess
 
 SOURCE_LANG = "java"
@@ -255,5 +258,5 @@ def write_bpe_files(output_folder, lang1_funcs, lang2_funcs, lang1, lang2, bpe_m
 
 if __name__ == "__main__":
     args = get_arguments()
-    bpe_model = fastBPE.fastBPE(args.bpe_path)
+    bpe_model = fastBPE.fastBPE(args.bpe_path)  # type: ignore
     main(Path(args.input_df), args.output_folder, args.langs, bpe_model, args.bpe_vocab)

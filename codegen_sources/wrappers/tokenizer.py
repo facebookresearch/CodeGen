@@ -6,24 +6,18 @@
 #
 
 import os
+from pathlib import Path
 from typing import List
 
 import fastBPE
 import torch
-from transformers import RobertaTokenizer
-
 from codegen_sources.model.src.utils import restore_roberta_segmentation_string
-from pathlib import Path
-from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
-from codegen_sources.preprocessing.lang_processors.python_processor import (
-    PythonProcessor,
-)
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 from codegen_sources.preprocessing.lang_processors.tokenization_utils import (
-    tokenize_string,
     detokenize_string,
+    tokenize_string,
 )
+from transformers import RobertaTokenizer
 
 JAVA_BPE_CODES = str(
     Path(__file__).parents[2].joinpath("data/bpe/cpp-java-python/codes")
@@ -109,8 +103,7 @@ class Tokenizer:
 
         if len(code) == 0:
             return []
-        code = code.split(" ")
-        return code
+        return code.split(" ")
 
     def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
         ids = [

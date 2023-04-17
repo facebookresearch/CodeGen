@@ -5,15 +5,98 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import pytest
+import codegen_sources.preprocessing.lang_processors as lp
+from codegen_sources.preprocessing.obfuscation import utils_deobfuscation
 from codegen_sources.preprocessing.tests.obfuscation.utils import diff_tester
-from codegen_sources.preprocessing.lang_processors.python_processor import (
-    PythonProcessor,
-)
-
-processor = PythonProcessor()
 
 
-def test_obfuscation_var_definition():
+processors = (lp.PythonProcessor(), lp.PythonTreeSitterProcessor())
+with_both_processors = pytest.mark.parametrize("processor", processors)
+
+# # # # # Type obfuscation
+
+
+def test_type_obfuscation() -> None:
+    processor = processors[1]
+    input_program = """from pathlib import Path
+import typing as tp
+
+global_var: tp.List[str] = []
+
+class Something:
+    '''accentué'''
+    class_var: int = 12
+    def __init__(self, something: tp.Union[str,
+                                           Path]) -> None:
+        self.uninitialized_var: int
+        self.var: dict = {}
+        self.var[0] = 12
+
+   async def func(self, input_: str = None) -> tp.List[str]:
+       self.uninitialized_var = 2
+       self.func(None)
+       return ["aaa"]
+
+    @classmethod
+    def myself(cls, other) -> "Something":
+        return self
+
+    def fail(cls, other: tp.Optional[str] = None, stuff: str| None = None):
+        return self
+"""
+    res, dico = processor.obfuscate_types(input_program)
+    expected = """from pathlib import Path
+
+
+global_var: VAR_0 = []
+
+class Something:
+    '''accentué'''
+    class_var: VAR_1 = 12
+    def __init__(self, something: VAR_2) -> None:
+        self.uninitialized_var: VAR_3
+        self.var: VAR_4 = {}
+        self.var[0] = 12
+
+   async def func(self, input_: VAR_5 = None) -> VAR_6:
+       self.uninitialized_var = 2
+       self.func(None)
+       return ["aaa"]
+
+    @classmethod
+    def myself(cls, other) -> VAR_7:
+        return self
+
+    def fail(cls, other: VAR_8 = None, stuff: VAR_9 = None):
+        return self
+"""
+    diff_tester(expected.strip(), res.strip())
+    expected_types = [
+        "List [ str ]",
+        "int",
+        "Union [ Path , str ]",
+        "int",
+        "Dict [ str , Any ]",
+        "Optional [ str ]",
+        "List [ str ]",
+        "Something",
+        "Optional [ str ]",
+        "Optional [ str ]",
+    ]
+    expected_dict = " | ".join(f"VAR_{k} {x}" for k, x in enumerate(expected_types))
+    diff_tester(
+        expected_dict, dico, split=" | ",
+    )
+    as_dict = utils_deobfuscation.read_dict(expected_dict)
+    assert as_dict["VAR_2"] == "Union [ Path , str ]"
+
+
+# # # # # Name obfuscation
+
+
+@with_both_processors
+def test_obfuscation_var_definition(processor: lp.LangProcessor) -> None:
     input_program = """import os
 class Factorial:
     def factorial(self, n, path):
@@ -46,7 +129,8 @@ class CLASS_0():
     )
 
 
-def test_obfuscation_recursive_method():
+@with_both_processors
+def test_obfuscation_recursive_method(processor: lp.LangProcessor) -> None:
     input_program = """class Factorial:
     def factorial(self, n):
         if n == 1:
@@ -67,7 +151,8 @@ def test_obfuscation_recursive_method():
     )
 
 
-def test_obfuscation_class_attributes():
+@with_both_processors
+def test_obfuscation_class_attributes(processor: lp.LangProcessor) -> None:
     input_program = """class Factorial:
         def __init__(self, number):
             self.n = number
@@ -96,7 +181,8 @@ def test_obfuscation_class_attributes():
     )
 
 
-def test_obfuscation_imported_var():
+@with_both_processors
+def test_obfuscation_imported_var(processor: lp.LangProcessor) -> None:
     input_program = """from something import stuff
 def factorial(n):
     if n == 1:
@@ -115,7 +201,8 @@ def FUNC_0(VAR_0):
     diff_tester("FUNC_0 factorial | VAR_0 n", dico, split=" | ")
 
 
-def test_function_scope():
+@with_both_processors
+def test_function_scope(processor: lp.LangProcessor) -> None:
     input_program = """
 def factorial(n):
     if n == 1:

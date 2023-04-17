@@ -6,12 +6,16 @@
 #
 
 import os
+import typing as tp
+from pathlib import Path
 from logging import getLogger
 
 import numpy as np
 import torch
 
 logger = getLogger()
+
+D = tp.TypeVar("D", bound="Dictionary")
 
 
 BOS_WORD = "<s>"
@@ -26,14 +30,19 @@ OBF = {"CLASS": "CLASS_%i", "FUNC": "FUNC_%i", "VAR": "VAR_%i"}
 OBFS = {"CLASS": 100, "FUNC": 200, "VAR": 200}
 OBFS_TOTAL = sum(OBFS.values())
 
+
+ENDBLOCK = "#ENDBLOCK"
+ENDFUNC = "#ENDFUNC"
+ENDCLASS = "#ENDCLASS"
+
 SEP_WORD = SPECIAL_WORD % 0
 MASK_WORD = SPECIAL_WORD % 1
 
 NUM_SPECIAL_TOKENS = 4 + SPECIAL_WORDS + OBFS_TOTAL
 
 
-class Dictionary(object):
-    def __init__(self, id2word, word2id, counts):
+class Dictionary:
+    def __init__(self, id2word, word2id, counts) -> None:
         assert len(id2word) == len(word2id) == len(counts), (
             len(id2word),
             len(word2id),
@@ -57,19 +66,19 @@ class Dictionary(object):
         self.n_obf_tokens = OBFS_TOTAL
         self.check_valid()
 
-    def __len__(self):
+    def __len__(self) -> int:
         """
         Returns the number of words in the dictionary.
         """
         return len(self.id2word)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i: int) -> str:
         """
         Returns the word of the specified index.
         """
         return self.id2word[i]
 
-    def __contains__(self, w):
+    def __contains__(self, w: str) -> bool:
         """
         Returns whether a word is in the dictionary.
         """
@@ -85,7 +94,7 @@ class Dictionary(object):
             return False
         return all(self.id2word[i] == y[i] for i in range(len(y)))
 
-    def check_valid(self):
+    def check_valid(self) -> None:
         """
         Check that the dictionary is valid.
         """
@@ -113,14 +122,16 @@ class Dictionary(object):
             assert count <= last_count
             last_count = count
 
-    def index(self, word, no_unk=False):
+    def index(self, word: str, no_unk: bool = False) -> int:
         """
         Returns the index of the specified word.
         """
-        if no_unk:
+        try:  # faster to ask for forginess if need be
             return self.word2id[word]
-        else:
-            return self.word2id.get(word, self.unk_index)
+        except KeyError as e:
+            if no_unk:
+                raise e
+            return self.unk_index
 
     def max_vocab(self, max_vocab):
         """
@@ -156,11 +167,12 @@ class Dictionary(object):
             % (min_count, init_size, len(self), init_size - len(self))
         )
 
-    @staticmethod
-    def read_vocab(vocab_path):
+    @classmethod
+    def read_vocab(cls: tp.Type[D], vocab_path: tp.Union[str, Path]) -> D:
         """
         Create a dictionary from a vocabulary file.
         """
+        vocab_path = str(vocab_path)
         skipped = 0
         assert os.path.isfile(vocab_path), vocab_path
         word2id = {BOS_WORD: 0, EOS_WORD: 1, PAD_WORD: 2, UNK_WORD: 3}
@@ -177,24 +189,24 @@ class Dictionary(object):
                 )
         counts = {k: 0 for k in word2id.keys()}
         f = open(vocab_path, "r", encoding="utf-8")
-        for i, line in enumerate(f):
-            if "\u2028" in line:
+        for i, line_str in enumerate(f):
+            if "\u2028" in line_str:
                 skipped += 1
                 continue
-            line = line.rstrip().split()
+            line = line_str.rstrip().split()
             if len(line) != 2:
                 skipped += 1
                 continue
             assert len(line) == 2, (i, line)
             # assert line[0] not in word2id and line[1].isdigit(), (i, line)
-            assert line[1].isdigit(), (i, line)
+            assert line[1].lstrip("-").isdigit(), (i, line)
             if line[0] in word2id:
                 skipped += 1
-                print("%s already in vocab" % line[0])
+                logger.info("%s already in vocab" % line[0])
                 continue
-            if not line[1].isdigit():
+            if not line[1].lstrip("-").isdigit():
                 skipped += 1
-                print("Empty word at line %s with count %s" % (i, line))
+                logger.info("Empty word at line %s with count %s" % (i, line))
                 continue
             word2id[line[0]] = (
                 NUM_SPECIAL_TOKENS + i - skipped
@@ -202,7 +214,7 @@ class Dictionary(object):
             counts[line[0]] = int(line[1])
         f.close()
         id2word = {v: k for k, v in word2id.items()}
-        dico = Dictionary(id2word, word2id, counts)
+        dico = cls(id2word, word2id, counts)
         logger.info("Read %i words from the vocabulary file." % len(dico))
         if skipped > 0:
             logger.warning("Skipped %i empty lines!" % skipped)
@@ -212,6 +224,12 @@ class Dictionary(object):
     def index_data(path, bin_path, dico):
         """
         Index sentences with a dictionary.
+
+        Parameters (to be confirmed)
+        ----------
+        path: input
+        bin_path: output
+        dico: Dictionary
         """
         if bin_path is not None and os.path.isfile(bin_path):
             logger.info("Loading data from %s ..." % bin_path)

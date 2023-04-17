@@ -5,16 +5,17 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import logging
+import os
+import re
+from pathlib import Path
+
 from codegen_sources.preprocessing.bpe_modes.bpe_mode import BPEMode
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import (
     OBFUSCATED_PREFIXES,
 )
-
-import os
-from pathlib import Path
 from transformers import RobertaTokenizer
-import re
-import logging
+import codegen_sources.utils.typing as tp
 
 logger = logging.getLogger()
 
@@ -46,7 +47,7 @@ class RobertaBPEMode(BPEMode):
             [" ".join(tokenizer._tokenize(line.strip())) for line in lines]
         )
 
-    def apply_bpe_file(self, file: str, output: str):
+    def apply_bpe_file(self, file: tp.PathLike, output: tp.PathLike) -> None:
         assert os.path.exists(
             file
         ), f"cannot apply bpe on file {file}, it doesnt exists."
@@ -57,11 +58,13 @@ class RobertaBPEMode(BPEMode):
         with open(output, "w", encoding="utf-8") as f:
             f.write(self.apply_bpe(code))
 
-    def repair_bpe_for_obfuscation_line(self, line: str):
+    @staticmethod
+    def repair_bpe_for_obfuscation_line(line: str):
         line = line.replace("CLASS _ ", "CLASS_")
         line = line.replace("FUN C _ ", "FUNC_")
         line = line.replace("V AR _ ", "VAR_")
-        for prefix in OBFUSCATED_PREFIXES:
+        line = re.sub("< special ([0-9]+) >", r"<special\1>", line)
+        for prefix in OBFUSCATED_PREFIXES + ["<special"]:
             n_replacements = 1
             line = line.replace(f"Ġ{prefix}", f"Ġ {prefix}")
             while n_replacements > 0:
@@ -70,7 +73,9 @@ class RobertaBPEMode(BPEMode):
                 )
         return line
 
-    def repair_bpe_for_obfuscation_file(self, file: str, output: str):
+    def repair_bpe_for_obfuscation_file(
+        self, file: tp.PathLike, output: tp.PathLike
+    ) -> None:
         output_file = open(output, "w", encoding="utf-8")
         with open(str(file), "r", encoding="utf-8") as input_file:
             for line in input_file:

@@ -5,30 +5,32 @@
 # LICENSE file in the root directory of this source tree.
 #
 import math
-import multiprocessing
 import os
+import sys
 import subprocess
+import typing as tp
 from concurrent.futures.thread import ThreadPoolExecutor
-from pathlib import Path, PosixPath
+from pathlib import Path
 
 import argparse
 
-from submitit import AutoExecutor, LocalExecutor
+import submitit
 from tqdm import tqdm
 import pandas as pd
-from utils import add_root_to_path
 
 
-add_root_to_path()
+root_path = Path(__file__).absolute().parents[2]
+print(f"adding {root_path} to path")
+sys.path.append(str(root_path))
 
 from codegen_sources.model.src.utils import get_java_bin_path
-from codegen_sources.preprocessing.lang_processors.tree_sitter_processor import (
+from codegen_sources.preprocessing.lang_processors import (
+    LangProcessor,
+    JavaProcessor,
     TREE_SITTER_ROOT,
 )
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
 from codegen_sources.preprocessing.utils import bool_flag
 import numpy as np
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
 
 
 EVOSUITE_JAR_PATH = Path(
@@ -40,13 +42,12 @@ assert (
 
 MUTATION_SCORE_CUTOFF = 0.9
 MAX_JAVA_MEM = 4096
-CPUS_PER_TASK = 80
 
 REPORT_FILE = "statistics.csv"
 
 
 def write_javacode_onefunctionperfile(
-    codestring: str, line_number: int, folder: PosixPath, with_id: bool = False
+    codestring: str, line_number: int, folder: Path, with_id: bool = False
 ):
     if "java.io.File(" in codestring.replace(
         " ", ""
@@ -81,7 +82,7 @@ import javafx.util.Pair;\n
 def run_command_compile_java_file(folderpath):
     print(f"compiling files in {folderpath}")
     files = os.listdir(folderpath)
-    executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
+    executor = ThreadPoolExecutor()
     jobs = []
     for file in files:
         jobs.append(executor.submit(compile_file, file, folderpath))
@@ -109,7 +110,7 @@ def compile_file(file, folderpath):
 
 def run_command_test_generation(folderpath):
     print(f"Generating tests in {folderpath}")
-    executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
+    executor = ThreadPoolExecutor()
 
     files = os.listdir(folderpath)
     jobs = []
@@ -179,14 +180,14 @@ def consolidate_reports(consolidated_report_path, report_dirs, folderpath):
                 report_path.parent.rmdir()
 
 
-def generate_javafiles_withclass(filepath: PosixPath, output_folder: PosixPath):
+def generate_javafiles_withclass(filepath: Path, output_folder: Path):
     print(f"creating files from {filepath} in {output_folder}")
     lines = open(filepath).readlines()
     for i, line in enumerate(lines):
         write_javacode_onefunctionperfile(line, i, output_folder, with_id=True)
 
 
-def generate_tests_pipeline(in_file: PosixPath, out_path: PosixPath):
+def generate_tests_pipeline(in_file: Path, out_path: Path):
     print(f"Creating tests for {in_file}, outputting them in {out_path}")
     out_path.mkdir(exist_ok=True)
     generate_javafiles_withclass(in_file, out_path)
@@ -260,13 +261,10 @@ if __name__ == "__main__":
     assert input_path.exists(), f"{input_path} does not exist"
     output_path = Path(args.output_path)
     output_path.mkdir(exist_ok=True)
+    cluster: tp.Optional[submitit.AutoExecutor] = None
     if args.local is False:
-        cluster = AutoExecutor(output_path.joinpath("log"))
-        cluster.update_parameters(cpus_per_task=CPUS_PER_TASK, mem_gb=300)
-        cluster.update_parameters(timeout_min=4000)
-    else:
-        cluster = None
-
+        cluster = submitit.AutoExecutor(output_path / "log")
+        cluster.update_parameters(cpus_per_task=80, mem_gb=300, partition="learnlab")
     input_path = Path(args.input_path)
     if input_path.is_file():
         infiles = [input_path]
@@ -289,9 +287,11 @@ if __name__ == "__main__":
         print(
             f"Running on the remaining {len(indices_to_run)} among {len(sub_out_folders)} files"
         )
-        infiles = np.array(infiles)[indices_to_run]
-        sub_out_folders = np.array(sub_out_folders)[indices_to_run]
-    if args.local:
+        infiles = np.array(infiles)[indices_to_run]  # type: ignore
+        sub_out_folders = np.array(sub_out_folders)[  # type: ignore
+            indices_to_run
+        ]
+    if cluster is None:
         # Running everything locally in parallel can use too much memory
         for file, out_path in tqdm(list(zip(infiles, sub_out_folders))):
             generate_tests_pipeline(file, out_path)

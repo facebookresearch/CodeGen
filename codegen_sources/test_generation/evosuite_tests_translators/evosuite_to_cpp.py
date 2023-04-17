@@ -16,7 +16,7 @@ from .evosuite_translator import EvosuiteTranslator
 
 
 class EvosuiteToCpp(EvosuiteTranslator):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.imports = """#include <iostream>
 #include <cstdlib>

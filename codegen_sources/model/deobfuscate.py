@@ -12,15 +12,9 @@ import sys
 import fastBPE
 import torch
 from codegen_sources.model.src.logger import create_logger
-from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
-from codegen_sources.preprocessing.lang_processors.python_processor import (
-    PythonProcessor,
-)
 from codegen_sources.model.src.utils import restore_roberta_segmentation_sentence
-from codegen_sources.preprocessing.bpe_modes.fast_bpe_mode import FastBPEMode
-from codegen_sources.preprocessing.bpe_modes.roberta_bpe_mode import RobertaBPEMode
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.preprocessing import bpe_modes as modes
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 from codegen_sources.model.src.data.dictionary import (
     Dictionary,
     BOS_WORD,
@@ -71,7 +65,7 @@ def get_parser():
 
 
 class Deobfuscator:
-    def __init__(self, model_path, BPE_path):
+    def __init__(self, model_path, BPE_path) -> None:
         # reload model
         reloaded = torch.load(model_path, map_location="cpu")
         # change params of the reloaded model so that it will
@@ -102,10 +96,13 @@ class Deobfuscator:
         self.decoder.eval()
 
         # reload bpe
-        if getattr(self.reloaded_params, "roberta_mode", False):
-            self.bpe_model = RobertaBPEMode()
+        if (
+            getattr(self.reloaded_params, "roberta_mode", False)
+            or getattr(self.reloaded_params, "tokenization_mode", "") == "roberta"
+        ):
+            self.bpe_model: modes.BPEMode = modes.RobertaBPEMode()
         else:
-            self.bpe_model = FastBPEMode(
+            self.bpe_model = modes.FastBPEMode(
                 codes=os.path.abspath(BPE_path), vocab_path=None
             )
 
@@ -197,7 +194,11 @@ class Deobfuscator:
             for i in range(x2.shape[1]):
                 wid = [self.dico[x2[j, i].item()] for j in range(len(x2))][1:]
                 wid = wid[: wid.index(EOS_WORD)] if EOS_WORD in wid else wid
-                if getattr(self.reloaded_params, "roberta_mode", False):
+                if (
+                    getattr(self.reloaded_params, "roberta_mode", False)
+                    or getattr(self.reloaded_params, "tokenization_mode", "")
+                    == "roberta"
+                ):
                     tok.append(restore_roberta_segmentation_sentence(" ".join(wid)))
                 else:
                     tok.append(" ".join(wid).replace("@@ ", ""))
@@ -227,7 +228,6 @@ if __name__ == "__main__":
     deobfuscator = Deobfuscator(params.model_path, params.BPE_path)
 
     # read input code from stdin
-    src_sent = []
     input = sys.stdin.read().strip()
 
     with torch.no_grad():

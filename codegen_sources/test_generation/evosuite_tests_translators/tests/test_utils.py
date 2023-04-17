@@ -5,12 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 import difflib
-import subprocess
 from pathlib import Path
 
-import uuid
-
-import os
+from codegen_sources.preprocessing.lang_processors.python_processor import apply_black
 
 folder_path = Path(__file__).parent
 JAVA_PATH = folder_path.joinpath("resources/java_evosuite_tests")
@@ -24,19 +21,6 @@ def translation_testing(examples_list, translator, should_apply_black=False):
         if should_apply_black:
             actual = apply_black(actual)
         diff_tester(expected_translation, actual)
-
-
-def apply_black(code: str):
-    filepath = f"/tmp/python_code_{uuid.uuid4()}.py"
-    with open(filepath, "w") as tmp_file:
-        tmp_file.write(code)
-    subprocess.run(
-        f"black {filepath}", shell=True,
-    )
-    with open(filepath, "r") as tmp_file_in:
-        output = tmp_file_in.read()
-    os.remove(filepath)
-    return output
 
 
 def diff_tester(expected, res, split="\n"):

@@ -6,12 +6,11 @@
 #
 
 import javalang
-from javalang.tokenizer import Position, Identifier
-
 from codegen_sources.preprocessing.obfuscation.obfuscated_names_generator import (
-    ObfuscatedNameType,
     ObfuscatedNamesGenerator,
+    ObfuscatedNameType,
 )
+from javalang.tokenizer import Identifier, Position
 
 EXCLUDED_TOKENS = {"main"}
 

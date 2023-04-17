@@ -8,14 +8,32 @@
 import argparse
 import json
 import random
+import sys
+from pathlib import Path
 
-from src.data.loader import check_data_params, load_data
-from src.evaluation.evaluator import SingleEvaluator, EncDecEvaluator
-from src.model import check_model_params, build_model, build_classifier
-from src.slurm import init_signal_handler, init_distributed_mode
-from src.trainer import SingleTrainer, EncDecTrainer
-from src.utils import bool_flag, initialize_exp, set_sampling_probs, shuf_order
-from src.utils import print_memory
+
+sys.path.append(str(Path(__file__).parents[2]))
+import codegen_sources
+from codegen_sources.model.src.constants import TOKENIZATION_MODES
+from codegen_sources.model.src.data.loader import check_data_params, load_data
+from codegen_sources.model.src.evaluation.evaluator import (
+    EncDecEvaluator,
+    SingleEvaluator,
+)
+from codegen_sources.model.src.model import (
+    build_classifier,
+    build_model,
+    check_model_params,
+)
+from codegen_sources.model.src.slurm import init_distributed_mode, init_signal_handler
+from codegen_sources.model.src.trainer import EncDecTrainer, SingleTrainer
+from codegen_sources.model.src.utils import (
+    bool_flag,
+    initialize_exp,
+    print_memory,
+    set_sampling_probs,
+    shuf_order,
+)
 
 
 def get_parser():
@@ -43,10 +61,24 @@ def get_parser():
         "--fp16", type=bool_flag, default=False, help="Run model with float16"
     )
     parser.add_argument(
+        "--efficient_attn",
+        type=str,
+        default=None,
+        choices=["flash", "cutlass", "fctls_bflsh", "auto"],
+        help="If set, uses efficient attention from xformers. Flash attention only works on A100 GPUs.",
+    )
+    parser.add_argument(
         "--amp",
         type=int,
         default=-1,
         help="Use AMP wrapper for float16 / distributed / gradient accumulation. Level of optimization. -1 to disable.",
+    )
+
+    parser.add_argument(
+        "--apex",
+        type=bool_flag,
+        default=False,
+        help="Whether to use apex for fp16 computation. By default, torch amp.",
     )
 
     # only use an encoder (use a specific decoder for machine translation)
@@ -106,6 +138,49 @@ def get_parser():
         help="Use sinusoidal embeddings",
     )
     parser.add_argument(
+        "--layer_dropout", type=float, default=0.0, help="Layer dropout ratio"
+    )
+    parser.add_argument(
+        "--min_layers",
+        type=int,
+        default=2,
+        help="Minimum number of layers remaining after layer dropout",
+    )
+
+    # CAPE relative embeddings
+    parser.add_argument(
+        "--cape_embeddings",
+        type=bool_flag,
+        default=False,
+        help="Use CAPE embeddings https://arxiv.org/pdf/2106.03143.pdf",
+    )
+    parser.add_argument(
+        "--cape_global_shift",
+        type=float,
+        default=5.0,
+        help="CAPE global shift parameter",
+    )
+
+    parser.add_argument(
+        "--cape_local_shift",
+        type=float,
+        default=0.5,
+        help="CAPE local shift parameter, above 0.5 token ordering is not preserved",
+    )
+    parser.add_argument(
+        "--cape_global_scaling",
+        type=float,
+        default=1.0,
+        help="CAPE max global scaling parameter. At 1, no scaling",
+    )
+    parser.add_argument(
+        "--discrete_cape_max",
+        type=int,
+        default=0,
+        help="Discrete cape global shift maximum. At 0, no shift.",
+    )
+
+    parser.add_argument(
         "--use_lang_emb", type=bool_flag, default=True, help="Use language embedding"
     )
 
@@ -122,7 +197,7 @@ def get_parser():
         "--word_pred",
         type=float,
         default=0.15,
-        help="Fraction of words for which we need to make a prediction",
+        help="Fraction of words for which we need to make a prediction in MLM.",
     )
     parser.add_argument(
         "--sample_alpha",
@@ -212,7 +287,9 @@ def get_parser():
     )
 
     # batch parameters
-    parser.add_argument("--bptt", type=int, default=256, help="Sequence length")
+    parser.add_argument(
+        "--bptt", type=int, default=256, help="Sequence length for stream dataset"
+    )
     parser.add_argument(
         "--max_len",
         type=int,
@@ -236,6 +313,13 @@ def get_parser():
     )
     parser.add_argument(
         "--tokens_per_batch", type=int, default=-1, help="Number of tokens per batch"
+    )
+
+    parser.add_argument(
+        "--eval_tokens_per_batch",
+        type=int,
+        default=None,
+        help="Number of tokens per batch for evaluation. By default, same as for training.",
     )
 
     parser.add_argument(
@@ -267,7 +351,7 @@ def get_parser():
     parser.add_argument(
         "--clip_grad_norm",
         type=float,
-        default=5,
+        default=1,
         help="Clip gradients norm (0 to disable)",
     )
     parser.add_argument(
@@ -311,6 +395,7 @@ def get_parser():
         "--lambda_clm", type=str, default="1", help="Causal coefficient (LM)"
     )
     parser.add_argument("--lambda_ae", type=str, default="1", help="AE coefficient")
+    parser.add_argument("--lambda_tae", type=str, default="1", help="TAE coefficient")
     parser.add_argument("--lambda_mt", type=str, default="1", help="MT coefficient")
     parser.add_argument(
         "--lambda_do", type=str, default="1", help="Deobfuscation coefficient"
@@ -360,6 +445,12 @@ def get_parser():
         "--ae_steps", type=str, default="", help="Denoising auto-encoder steps"
     )
     parser.add_argument(
+        "--tae_steps",
+        type=str,
+        default="",
+        help="Concatenated denoising auto-encoding steps",
+    )
+    parser.add_argument(
         "--bt_steps", type=str, default="", help="Back-translation steps"
     )
     parser.add_argument(
@@ -400,11 +491,26 @@ def get_parser():
         help="Reload a the encoder of the pretrained model for the decoder.",
     )
     parser.add_argument(
-        "--roberta_mode",
-        type=bool_flag,
-        default=False,
-        help="If we reload a pretrained roberta, need to put this params to True that positions idx are computed in the roberta way and use gelu.",
+        "--tokenization_mode",
+        type=str,
+        default="fastbpe",
+        choices=TOKENIZATION_MODES,
+        help="Type of tokenization, can be fastbpe, roberta or sentencepiece"
+        "If we reload a pretrained roberta, need to put this params to True that positions idx are computed in the roberta way and use gelu.",
     )
+
+    parser.add_argument(
+        "--sentencepiece_model_path",
+        type=Path,
+        default=Path(codegen_sources.__file__).resolve().parents[1]
+        / "data"
+        / "bpe"
+        / "sentencepiece"
+        / "sentencepiece_32k_v2"
+        / "model",
+        help="Path to sentencepiece model. Only used if tokenization_mode is set to 'sentencepiece'",
+    )
+
     parser.add_argument(
         "--reload_checkpoint", type=str, default="", help="Reload a checkpoint"
     )
@@ -451,6 +557,12 @@ def get_parser():
         help="At BT training, sample temperature for generation",
     )
 
+    parser.add_argument(
+        "--bt_max_len",
+        type=int,
+        default=None,
+        help="At BT max length of generations. Will be max_len by default.",
+    )
     # ST parameters
     parser.add_argument(
         "--st_sample_temperature",
@@ -592,6 +704,12 @@ def get_parser():
         help="Evaluate BLEU score during MT training",
     )
     parser.add_argument(
+        "--eval_bt_pairs",
+        type=bool_flag,
+        default=True,
+        help="Whether to evaluate on BT language pairs",
+    )
+    parser.add_argument(
         "--eval_denoising",
         type=bool_flag,
         default=False,
@@ -611,15 +729,46 @@ def get_parser():
     )
     parser.add_argument(
         "--eval_computation",
+        type=str,
+        default="",
+        help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
+    )
+    parser.add_argument(
+        "--eval_ir_similarity",
+        type=str,
+        default="",
+        help="Check BLEU similarity on the recomputed IR",
+    )
+    parser.add_argument(
+        "--eval_computation_pivot",
+        type=str,
+        default="",
+        help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
+    )
+    parser.add_argument(
+        "--pivot_bpe_model",
+        type=str,
+        default="",
+        help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
+    )
+    parser.add_argument(
+        "--cannonize_irs",
         type=bool_flag,
         default=False,
-        help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
+        help="Whether to cannonize IRs for pivot at evaluation time",
     )
     parser.add_argument(
         "--eval_st",
         type=bool_flag,
         default=False,
         help="Whether to evaluate on self-generated tests with evosuite.",
+    )
+    parser.add_argument(
+        "--translation_eval_set",
+        type=str,
+        default="GfG",
+        choices=["GfG", "CodeNet"],
+        help="Evaluation set for translation. Supported eval sets are GfG and CodeNet right now.",
     )
     parser.add_argument(
         "--generate_hypothesis",
@@ -630,6 +779,17 @@ def get_parser():
     parser.add_argument(
         "--eval_only", type=bool_flag, default=False, help="Only run evaluations"
     )
+    parser.add_argument(
+        "--eval_beginning",
+        type=bool_flag,
+        default=False,
+        help="Eval at the beginning of training",
+    )
+
+    parser.add_argument(
+        "--train_only", type=bool_flag, default=False, help="Run no evaluation"
+    )
+
     parser.add_argument(
         "--retry_mistmatching_types",
         type=bool_flag,
@@ -712,14 +872,16 @@ def main(params):
     # build trainer, reload potential checkpoints / build evaluator
     if params.encoder_only:
         trainer = SingleTrainer(model, data, params, classifier)
-        evaluator = SingleEvaluator(trainer, data, params)
+        if not params.train_only:
+            evaluator = SingleEvaluator(trainer, data, params)
     else:
         trainer = EncDecTrainer(encoder, decoder, data, params)
-        evaluator = EncDecEvaluator(trainer, data, params)
+        if not params.train_only:
+            evaluator = EncDecEvaluator(trainer, data, params)
     print_memory(logger, "after building all models")
 
     # evaluation
-    if params.eval_only:
+    if params.eval_only or params.eval_beginning:
         scores = evaluator.run_all_evals(trainer)
         for k, v in scores.items():
             if isinstance(v, list):
@@ -727,7 +889,8 @@ def main(params):
             else:
                 logger.info("%s -> %.6f" % (k, v))
         logger.info("__log__:%s" % json.dumps(scores))
-        exit()
+        if params.eval_only:
+            exit()
 
     # set sampling probabilities for training
     set_sampling_probs(data, params)
@@ -744,7 +907,9 @@ def main(params):
 
             # CLM steps
             for lang1, lang2 in shuf_order(params.clm_steps, params):
-                trainer.clm_step(lang1, lang2, params.lambda_clm)
+                trainer.clm_step(
+                    lang1, lang2, params.lambda_clm, show_example=show_example
+                )
 
             # MLM steps (also includes TLM if lang2 is not None)
             for lang1, lang2 in shuf_order(params.mlm_steps, params):
@@ -754,8 +919,14 @@ def main(params):
 
             # denoising auto-encoder steps
             for lang in shuf_order(params.ae_steps):
-                trainer.mt_step(
-                    lang, lang, params.lambda_ae, show_example=show_example,
+                trainer.ae_step(
+                    lang, None, params.lambda_ae, show_example=show_example,
+                )
+
+            # concatenated denoising auto-encoder steps
+            for lang1, lang2 in shuf_order(params.tae_steps):
+                trainer.ae_step(
+                    lang1, lang2, params.lambda_tae, show_example=show_example,
                 )
 
             # machine translation steps
@@ -774,13 +945,12 @@ def main(params):
                     show_example=show_example,
                 )
 
-            # deobscuation step
+            # deobfuscation step
             for lang1, lang2 in shuf_order(params.do_steps):
-                trainer.mt_step(
+                trainer.dobf_step(
                     lang1,
                     lang2,
                     params.lambda_do,
-                    deobfuscate=True,
                     deobfuscate_p=1 - params.obf_proba,
                     show_example=show_example,
                 )
@@ -815,16 +985,18 @@ def main(params):
         logger.info("============ End of epoch %i ============" % trainer.epoch)
 
         # evaluate perplexity
-        scores = evaluator.run_all_evals(trainer)
+        scores = None
+        if not params.train_only:
+            scores = evaluator.run_all_evals(trainer)
 
-        # print / JSON log
-        for k, v in scores.items():
-            if isinstance(v, list):
-                logger.info("%s -> %s" % (k, json.dumps(["%.2f" % el for el in v])))
-            else:
-                logger.info("%s -> %.6f" % (k, v))
-        if params.is_master:
-            logger.info("__log__:%s" % json.dumps(scores))
+            # print / JSON log
+            for k, v in scores.items():
+                if isinstance(v, list):
+                    logger.info("%s -> %s" % (k, json.dumps(["%.2f" % el for el in v])))
+                else:
+                    logger.info("%s -> %.6f" % (k, v))
+            if params.is_master:
+                logger.info("__log__:%s" % json.dumps(scores))
 
         # end of epoch
         if params.validation_metrics != "":

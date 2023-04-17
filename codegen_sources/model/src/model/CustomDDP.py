@@ -6,18 +6,22 @@
 #
 from torch import nn
 
-from apex.parallel import DistributedDataParallel
+try:
+    from apex.parallel import DistributedDataParallel
+
+    class CustomApexDDP(DistributedDataParallel):
+        def __getattr__(self, name):
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                return getattr(self.module, name)
+
+
+except ImportError:
+    pass
 
 
 class CustomTorchDDP(nn.parallel.DistributedDataParallel):
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.module, name)
-
-
-class CustomApexDDP(DistributedDataParallel):
     def __getattr__(self, name):
         try:
             return super().__getattr__(name)
