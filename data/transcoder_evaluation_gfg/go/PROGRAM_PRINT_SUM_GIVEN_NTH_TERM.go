@@ -1,0 +1,46 @@
+package main
+
+import (
+		"fmt"
+	"os"
+	"unsafe"
+)
+
+func min(x int, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
+func max(x int, y int) int {
+	if x > y {
+		return x
+	}
+	return y
+}
+func cmpfunc(a unsafe.Pointer, b unsafe.Pointer) int {
+	return *(*int)(a) - *(*int)(b)
+}
+
+
+func f_gold(n int) int {
+	var S int = 0
+	for i := int(1); i <= n; i++ {
+		S += i*i - (i-1)*(i-1)
+	}
+	return S
+}
+//TOFILL
+func main() {
+	var (
+		n_success int     = 0
+		param0    []int = []int{39, 20, 10, 39, 70, 21, 21, 80, 89, 99}
+	)
+	for i := int(0); i < len(param0[:]); i++ {
+		if f_filled(param0[i]) == f_gold(param0[i]) {
+			n_success += 1
+		}
+	}
+	fmt.Print("#Results:", " ", n_success, ", ", len(param0[:]))
+	os.Exit(0)
+}
