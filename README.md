@@ -97,7 +97,7 @@ Also, we provide [wrappers](codegen_sources/wrappers) to fine-tune and evaluate 
 
 
 ### Download models
-You can download the following models :
+You can download the following models:
 - [MLM](docs/dobf.md#pre-trained-models)
 - [TransCoder](docs/transcoder.md#pre-trained-models). Use it to translate some code [here](codegen_sources/model/translate.py).
 - [DOBF](docs/dobf.md#pre-trained-models). Use it to deobfuscate some code [here](codegen_sources/model/deobfuscate.py).
