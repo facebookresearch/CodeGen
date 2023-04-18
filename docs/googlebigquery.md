@@ -15,18 +15,30 @@
   - gsutil -m cp -r gs://name_of_bucket/name_of_folder . -> copy your bucket on your machine
 
 Example of query for python :
-```
-SELECT 
- f.repo_name,
- f.ref,
- f.path,
- c.copies,
- c.content
+```sql
+WITH selected_repos as (
+SELECT f.id, f.repo_name as repo_name, f.ref as ref, f.path as path
 FROM `bigquery-public-data.github_repos.files` as f
-  JOIN `bigquery-public-data.github_repos.contents` as c on f.id = c.id
-WHERE 
-  NOT c.binary
-  AND f.path like '%.py'
+JOIN `bigquery-public-data.github_repos.licenses` as l on l.repo_name = f.repo_name
+WHERE l.license = 'LICENCE1' OR l.license = 'LICENCE2'...
+),
+deduped_files as (
+SELECT f.id, MIN(f.repo_name) as repo_name, MIN(f.ref) as ref, MIN(f.path) as path
+FROM selected_repos as f
+GROUP BY f.id
+)
+SELECT
+f.repo_name,
+f.ref,
+f.path,
+c.copies,
+c.content,
+l.license,
+FROM deduped_files as f
+JOIN `bigquery-public-data.github_repos.contents` as c on f.id = c.id
+WHERE
+ NOT c.binary
+ AND f.path like '%.py'
 ```
 
 Google link for more info here
