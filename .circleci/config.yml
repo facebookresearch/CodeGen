@@ -91,7 +91,7 @@ jobs:
           command: |
             . venv/bin/activate
             mypy --version
-            mypy codegen_sources multixp
+            mypy codegen_sources
 
       - run:
           name: Run black
