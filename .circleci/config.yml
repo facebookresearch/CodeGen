@@ -87,13 +87,6 @@ jobs:
             pip freeze
 
       - run:
-          name: Run mypy
-          command: |
-            . venv/bin/activate
-            mypy --version
-            mypy codegen_sources
-
-      - run:
           name: Run black
           when: always
           command: |

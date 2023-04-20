@@ -36,7 +36,5 @@ class BPEMode:
     def repair_bpe_for_obfuscation_line(line: str) -> str:
         raise NotImplementedError
 
-    def repair_bpe_for_obfuscation_file(
-        self, file: str, output: str
-    ) -> None:
+    def repair_bpe_for_obfuscation_file(self, file: str, output: str) -> None:
         raise NotImplementedError
