@@ -13,7 +13,7 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-          - v0-dependencies-{{ checksum "requirements.txt" }}
+          - v2-dependencies-{{ checksum "ci_requirements.txt" }}
       - run:
           name: install firejail cmake java go
           command: |
@@ -67,7 +67,7 @@ jobs:
           paths:
             - ./venv
             - ./tree-sitter
-          key: v0-dependencies-{{ checksum "requirements.txt" }}
+          key: v2-dependencies-{{ checksum "ci_requirements.txt" }}
 
       - run:
           name: install gtest
