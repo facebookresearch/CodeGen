@@ -13,7 +13,7 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-          - v2-dependencies-{{ checksum "ci_requirements.txt" }}
+          - v0-dependencies-{{ checksum "requirements.txt" }}
       - run:
           name: install firejail cmake java go
           command: |
@@ -67,7 +67,7 @@ jobs:
           paths:
             - ./venv
             - ./tree-sitter
-          key: v2-dependencies-{{ checksum "ci_requirements.txt" }}
+          key: v0-dependencies-{{ checksum "requirements.txt" }}
 
       - run:
           name: install gtest
@@ -85,6 +85,13 @@ jobs:
           command: |
             . venv/bin/activate
             pip freeze
+
+      - run:
+          name: Run mypy
+          command: |
+            . venv/bin/activate
+            mypy --version
+            mypy codegen_sources multixp
 
       - run:
           name: Run black
