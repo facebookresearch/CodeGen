@@ -28,7 +28,7 @@ logger = getLogger()
 
 class IRFullFilesMode(DatasetMode):
     """
-    Callable where we track the repos processed so that we can checkpoint with submitit
+    Callable where we track the repos processed so that we can checkpoint with  submitit
     """  # TODO currently not callable nor checkpointable
 
     def __init__(
