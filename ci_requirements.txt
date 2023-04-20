@@ -12,11 +12,12 @@ submitit
 sacrebleu==1.2.11
 javalang
 psutil
-pytest==6.2.2
+pytest
 pytest-cov
 tree_sitter
 cython
 black==19.10b0
+click==8.0.3  # to avoid black error
 hiplot
 mypy
 types-requests
@@ -24,3 +25,5 @@ types-dataclasses  # for python 3.6
 types-six
 einops
 typing_extensions
+sentencepiece
+pebble
