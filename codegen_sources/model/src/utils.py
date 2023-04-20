@@ -23,7 +23,6 @@ import sentencepiece  # type: ignore
 import torch
 from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
 
-from multixp.common.utils import PathLike
 from .constants import (
     SUPPORTED_LANGUAGES_FOR_TESTS,
     FALSY_STRINGS,
@@ -35,6 +34,7 @@ from .data.dictionary import NUM_SPECIAL_TOKENS
 TOK_AVOID_NEWLINE = "#NEWLINE"
 
 LTensor = torch.LongTensor
+PathLike = tp.Union[Path, str]
 
 REPO_ROOT = Path(__file__).parents[3].absolute()
 sys.path.append(str(REPO_ROOT))

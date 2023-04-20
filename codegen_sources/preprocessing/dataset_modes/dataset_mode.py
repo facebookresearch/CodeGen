@@ -26,7 +26,7 @@ import pebble  # type: ignore
 import submitit
 from pebble import ProcessExpired  # type: ignore
 
-import codegen_sources.utils.typing as tp
+import typing as tp
 from codegen_sources.preprocessing import timeout
 from codegen_sources.preprocessing.lang_processors import (
     LangProcessor,
@@ -43,7 +43,8 @@ from codegen_sources.preprocessing.utils import (
     shuf_file,
     shuf_parallel_files,
 )
-from codegen_sources.utils.typing import PathLike
+
+PathLike = tp.Union[Path, str]
 
 TIMEOUT = "timeout"
 
@@ -55,7 +56,7 @@ lang_processors: tp.Dict[str, LangProcessor] = {}
 
 @contextlib.contextmanager
 def open_file_dict(
-    filepaths: tp.Mapping[str, tp.PathLike], mode: str = "w"
+    filepaths: tp.Mapping[str, str], mode: str = "w"
 ) -> tp.Iterator[tp.Dict[str, tp.TextIO]]:
     """Context for opening a dict of filepaths and safely close them at the end"""
     with contextlib.ExitStack() as stack:
@@ -69,7 +70,7 @@ def open_file_dict(
 
 
 @contextlib.contextmanager
-def batch_if_available(executor: tp.ExecutorLike) -> tp.Iterator[None]:
+def batch_if_available(executor: "ExecutorLike") -> tp.Iterator[None]:
     """Only submitit executors have a batch context, so we need different
     cases for other executor (eg: concurrent.futures)
     Batch context in submitit allows for using arrays in slurm, which is
@@ -111,7 +112,7 @@ class DatasetMode:
     def __init__(
         self,
         suffixes: tp.List[str],
-        folder: tp.PathLike,
+        folder: str,
         languages: tp.List[str],
         bpe: bpe_modes.BPEMode,
         parallel_dataset: bool,
@@ -168,7 +169,7 @@ class DatasetMode:
 
     def extract_data_and_tokenize(
         self,
-        executor: tp.OptExecutor = None,
+        executor: "OptExecutor" = None,
         local_parallelism: tp.Optional[int] = None,
         tokenize_line_timeout: int = 240,
     ) -> None:
@@ -184,7 +185,7 @@ class DatasetMode:
             executor = ProcessPoolExecutor(max_workers=local_parallelism)
         assert executor is not None
 
-        jobs: tp.List[tp.JobLike] = []
+        jobs: tp.List["JobLike"] = []
 
         assert any(
             len(list(self.folder.glob(f"{lang}.*.json.gz"))) > 0
@@ -237,7 +238,7 @@ class DatasetMode:
 
     def extract_from_json_and_tokenize(
         self,
-        input_path: tp.PathLike,
+        input_path: str,
         lang: str,
         process_strings: bool,
         local_parallelism: tp.Optional[int] = None,
@@ -713,7 +714,7 @@ class DatasetMode:
 
     def apply_bpe(
         self,
-        executor: tp.OptExecutor = None,
+        executor: "OptExecutor" = None,
         local_parallelism: tp.Optional[int] = None,
     ) -> None:
         logger.info("")
@@ -751,7 +752,7 @@ class DatasetMode:
         # logger.info("Regrouping BPE")
         # self.regroup_bpe()
 
-    def get_vocab(self, executor: tp.OptExecutor = None):
+    def get_vocab(self, executor: "OptExecutor" = None):
         logger.info("")
         logger.info("")
         logger.info("========== Get VOCAB ===========")
@@ -770,12 +771,12 @@ class DatasetMode:
             return
         self._get_vocab(executor)
 
-    def _get_vocab(self, executor: tp.OptExecutor = None):
+    def _get_vocab(self, executor: "OptExecutor" = None):
         raise NotImplementedError("Get vocab method needs to be implemented.")
 
     def binarize(
         self,
-        executor: tp.OptExecutor = None,
+        executor: "OptExecutor" = None,
         local_parallelism: tp.Optional[int] = None,
     ) -> None:
         logger.info("")

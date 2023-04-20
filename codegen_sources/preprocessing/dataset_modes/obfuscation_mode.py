@@ -9,7 +9,7 @@ from itertools import chain
 from logging import getLogger
 
 import submitit
-import codegen_sources.utils.typing as tp
+import typing as tp
 from codegen_sources.preprocessing.bpe_modes.bpe_mode import TMP_EXT
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import (
     DATASET_SPLITS,
@@ -113,7 +113,7 @@ class ObfuscationMode(DatasetMode):
         return False
 
     def _learn_bpe(
-        self, ncodes: int, executor: tp.Optional[tp.ExecutorLike] = None
+        self, ncodes: int, executor: tp.Optional["ExecutorLike"] = None
     ) -> None:
         raise Exception(
             "BPE codes should not be learnt from obfuscated data. Learn them on monolingual data."
@@ -123,7 +123,7 @@ class ObfuscationMode(DatasetMode):
 
     def apply_bpe(
         self,
-        executor: tp.Optional[tp.ExecutorLike] = None,
+        executor: tp.Optional["ExecutorLike"] = None,
         local_parallelism: tp.Optional[int] = None,
     ) -> None:
         """
@@ -158,7 +158,7 @@ class ObfuscationMode(DatasetMode):
             assert f.with_suffix("").is_file()
             f.unlink()
 
-    def _get_vocab(self, executor: tp.Optional[tp.ExecutorLike] = None) -> None:
+    def _get_vocab(self, executor: tp.Optional["ExecutorLike"] = None) -> None:
         raise Exception(
             "Vocab should not be learnt from obfuscated data. Learn it on monolingual data."
             "Please provide vocab or learn them."

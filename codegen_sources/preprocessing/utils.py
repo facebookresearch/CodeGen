@@ -12,8 +12,10 @@ from pathlib import Path
 from logging import getLogger
 
 from codegen_sources.model.preprocess import XLM_preprocess
-import codegen_sources.utils.typing as tp
+import typing as tp
 
+
+PathLike = tp.Union[str, Path]
 
 REPO_ROOT = str(Path(__file__).parents[2])
 
@@ -35,7 +37,7 @@ def bool_flag(s):
         raise argparse.ArgumentTypeError("Invalid value for a boolean flag!")
 
 
-def is_valid_file(filepath: tp.Optional[tp.PathLike]) -> bool:
+def is_valid_file(filepath: tp.Optional[PathLike]) -> bool:
     if filepath is None:
         return False
     if isinstance(filepath, str):
@@ -140,7 +142,7 @@ def get_all_pairs(items):
     ]
 
 
-def shuf_parallel_files(file_paths: tp.List[tp.PathLike]) -> None:
+def shuf_parallel_files(file_paths: tp.List[PathLike]) -> None:
     lines_order: tp.List[int] = []
     for input_path in file_paths:
         input_path = Path(input_path)

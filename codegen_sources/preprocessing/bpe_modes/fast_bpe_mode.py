@@ -11,7 +11,7 @@ from logging import getLogger
 from pathlib import Path
 
 import fastBPE
-import codegen_sources.utils.typing as tp
+import typing as tp
 from codegen_sources.preprocessing.bpe_modes.bpe_mode import BPEMode
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import (
     OBFUSCATED_PREFIXES,
@@ -29,8 +29,8 @@ class FastBPEMode(BPEMode):
 
     def __init__(
         self,
-        vocab_path: tp.Optional[tp.PathLike],
-        codes: tp.Optional[tp.PathLike],
+        vocab_path: tp.Optional[str],
+        codes: tp.Optional[str],
         use_vocab: bool = False,
     ):
         super().__init__(ext=".bpe", vocab_path=vocab_path, process_strings=True)
@@ -82,7 +82,7 @@ class FastBPEMode(BPEMode):
         assert isinstance(code, str)
         return " ".join(bpe_model.apply(code.split()))
 
-    def apply_bpe_file(self, file: tp.PathLike, output: tp.PathLike) -> None:
+    def apply_bpe_file(self, file: str, output: str) -> None:
         if output is None:
             output = file + self.ext
         vocab = self.vocab_path if self.vocab_path is not None else ""
@@ -114,7 +114,7 @@ class FastBPEMode(BPEMode):
         return line
 
     def repair_bpe_for_obfuscation_file(
-        self, file: tp.PathLike, output: tp.PathLike
+        self, file: str, output: str
     ) -> None:
         output_file = open(output, "w", encoding="utf-8")
         with open(str(file), "r", encoding="utf-8") as input_file:

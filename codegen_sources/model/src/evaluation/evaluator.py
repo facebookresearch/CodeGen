@@ -22,7 +22,6 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 
 from codegen_sources.IR_tools.utils_ir import code_to_ir, ERROR_MESSAGE
 from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
-from multixp.common.utils import PathLike
 from .comp_acc_computation import (
     load_evosuite_transcoder_tests,
     eval_function_output,
@@ -51,6 +50,8 @@ import sys
 from ..vizualization_utils import vizualize_do_files, vizualize_translated_files
 
 sys.path.append(str(REPO_ROOT))
+
+PathLike = tp.Union[Path, str]
 
 SRC_ST_LANGS = "java"
 

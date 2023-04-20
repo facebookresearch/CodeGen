@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 from abc import ABC
-import codegen_sources.utils.typing as tp
+import typing as tp
 
 
 NEWLINE_TOK = "NEW_LINE"  # different name to avoid confusions by the tokenizer

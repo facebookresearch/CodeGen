@@ -15,7 +15,7 @@ from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import (
     OBFUSCATED_PREFIXES,
 )
 from transformers import RobertaTokenizer
-import codegen_sources.utils.typing as tp
+import typing as tp
 
 logger = logging.getLogger()
 
@@ -47,7 +47,7 @@ class RobertaBPEMode(BPEMode):
             [" ".join(tokenizer._tokenize(line.strip())) for line in lines]
         )
 
-    def apply_bpe_file(self, file: tp.PathLike, output: tp.PathLike) -> None:
+    def apply_bpe_file(self, file: str, output: str) -> None:
         assert os.path.exists(
             file
         ), f"cannot apply bpe on file {file}, it doesnt exists."
@@ -74,7 +74,7 @@ class RobertaBPEMode(BPEMode):
         return line
 
     def repair_bpe_for_obfuscation_file(
-        self, file: tp.PathLike, output: tp.PathLike
+        self, file: str, output: str
     ) -> None:
         output_file = open(output, "w", encoding="utf-8")
         with open(str(file), "r", encoding="utf-8") as input_file:

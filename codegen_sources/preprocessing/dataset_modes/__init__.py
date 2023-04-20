@@ -6,6 +6,3 @@ from .ir_full_files_mode import IRFullFilesMode
 from .monolingual_mode import MonolingualMode
 from .obfuscation_mode import ObfuscationMode
 from .obfuscation_functions_mode import ObfuscationFunctionsMode
-from .python_typehints_mode import PythonTypeHintsMode
-from .hacky_sentencepiece_mode import SentencePieceMode
-from .hacky_sentencepiece_function_mode import SentencePieceFunctionMode

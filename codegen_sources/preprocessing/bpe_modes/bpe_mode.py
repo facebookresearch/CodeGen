@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 from pathlib import Path
-import codegen_sources.utils.typing as tp
+import typing as tp
 
 TMP_EXT = ".tmp"
 
@@ -17,7 +17,7 @@ class BPEMode:
 
     # TODO add restore BPE of XLM utils into that class
     def __init__(
-        self, ext: str, vocab_path: tp.Optional[tp.PathLike], process_strings: bool
+        self, ext: str, vocab_path: tp.Optional[str], process_strings: bool
     ) -> None:
         self.ext = ext
         self.vocab_path = None if vocab_path is None else Path(vocab_path)
@@ -29,7 +29,7 @@ class BPEMode:
     def apply_bpe(self, code: str) -> str:
         raise NotImplementedError
 
-    def apply_bpe_file(self, file: tp.PathLike, output: tp.PathLike) -> None:
+    def apply_bpe_file(self, file: str, output: str) -> None:
         raise NotImplementedError
 
     @staticmethod
@@ -37,6 +37,6 @@ class BPEMode:
         raise NotImplementedError
 
     def repair_bpe_for_obfuscation_file(
-        self, file: tp.PathLike, output: tp.PathLike
+        self, file: str, output: str
     ) -> None:
         raise NotImplementedError

@@ -10,7 +10,7 @@ from logging import getLogger
 from pathlib import Path
 
 import submitit
-import codegen_sources.utils.typing as tp
+import typing as tp
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import DatasetMode
 from codegen_sources.preprocessing.lang_processors import LangProcessor
 from codegen_sources.preprocessing import bpe_modes
@@ -99,7 +99,7 @@ class MonolingualFunctionsMode(DatasetMode):
         )
 
     def _learn_bpe(
-        self, ncodes: int, executor: tp.Optional[tp.ExecutorLike] = None
+        self, ncodes: int, executor: tp.Optional["ExecutorLike"] = None
     ) -> None:
         # get data to training data for bpe
         all_shufs = [
@@ -129,7 +129,7 @@ class MonolingualFunctionsMode(DatasetMode):
         assert is_valid_file(self.bpe.codes)
         logger.info(f"Successfully learnt bpe. Bpe codes stored in {self.bpe.codes}.")
 
-    def _get_vocab(self, executor: tp.Optional[tp.ExecutorLike] = None) -> None:
+    def _get_vocab(self, executor: tp.Optional["ExecutorLike"] = None) -> None:
         # get data to learn vocab
         assert isinstance(self.bpe, bpe_modes.FastBPEMode)
 
