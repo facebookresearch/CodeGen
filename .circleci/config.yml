@@ -7,7 +7,8 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/python:3.6.9
+      - image: cimg/python:3.10.6
+    resource_class: large
     steps:
       - checkout
       - restore_cache:
@@ -17,10 +18,15 @@ jobs:
           name: install firejail cmake java go
           command: |
             sudo apt-get --allow-releaseinfo-change update
-            sudo apt-get install firejail cmake default-jdk
-            wget -c https://dl.google.com/go/go1.14.2.linux-amd64.tar.gz -O - | sudo tar -xz -C /usr/local
+            sudo apt-get install firejail cmake default-jdk clang-format
+            pushd /tmp
+            wget -c https://dl.google.com/go/go1.20.3.linux-amd64.tar.gz
+            sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
+            # wget -c https://dl.google.com/go/go1.14.2.linux-amd64.tar.gz -O - | sudo tar -xz -C /usr/local
+            popd
             sudo cp /usr/local/go/bin/go /usr/bin/
-            go get golang.org/x/tools/cmd/goimports
+            # go get golang.org/x/tools/cmd/goimports
+            go install golang.org/x/tools/cmd/goimports@latest
 
       - run:
           name: install dependencies
@@ -28,7 +34,7 @@ jobs:
             python3 -m venv venv
             . venv/bin/activate
 
-            pip install -U pip
+            pip install -U pip setuptools
             pip install -r ci_requirements.txt
 
             # install rust
@@ -51,7 +57,11 @@ jobs:
             python setup.py install
             cd ..
             pip install fastBPE
-            pip install einops
+
+            git clone https://github.com/openai/human-eval.git
+            cat human-eval/human_eval/execution.py | sed "s/#                         exec(check_program, exec_globals)/                         exec(check_program, exec_globals)/" > human-eval/human_eval/execution2.py
+            mv human-eval/human_eval/execution2.py human-eval/human_eval/execution.py
+            pip install -e human-eval
 
       - save_cache:
           paths:
@@ -81,6 +91,7 @@ jobs:
           when: always
           command: |
             . venv/bin/activate
+            black --version
             black codegen_sources/. --diff
             black codegen_sources/. --check
 
