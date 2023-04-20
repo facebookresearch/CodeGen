@@ -8,35 +8,25 @@
 import sys
 import typing as tp
 from logging import getLogger
-from pathlib import Path
-
-import submitit
 
 from codegen_sources.IR_tools.utils_ir import code_to_ir, ir_had_errors
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import (
     DATASET_SPLITS,
     DatasetMode,
 )
-from codegen_sources.preprocessing.dataset_modes.ir_functions_mode import (
-    IRFunctionsMode,
-)
 from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
-from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import REPLACE_DICT
-from codegen_sources.preprocessing.timeout import timeout
 from codegen_sources.preprocessing.utils import (
     check_same_number_of_lines,
     create_symlink,
     get_all_pairs,
-    get_subset_file,
     is_valid_file,
 )
-from submitit import Executor, LocalExecutor
 
 IR_SUFFIXES = ["sa", "ir_sa"]
 logger = getLogger()
 
 
-class IRFullFilesMode(IRFunctionsMode):
+class IRFullFilesMode(DatasetMode):
     """
     Callable where we track the repos processed so that we can checkpoint with submitit
     """  # TODO currently not callable nor checkpointable
@@ -127,3 +117,82 @@ class IRFullFilesMode(IRFunctionsMode):
             json_line["repo_name"],
             {"sa": [tokenized_file], "ir_sa": irs},
         )
+
+    def check_files_and_symlink_for_XLM(self):
+        logger.info("")
+        logger.info("")
+        logger.info("========== Check and Create symlinks ===========")
+        # check that all files exist and are not empty
+        for lang in self.languages:
+            for suffix in self.suffixes:
+                for split in DATASET_SPLITS:
+                    if split == "train":
+                        for i in range(self.nb_train_split):
+                            f = self.folder.joinpath(
+                                f"{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth"
+                            )
+                            if not is_valid_file(f):
+                                logger.warning(f"doest not exist {f}")
+                    else:
+                        f = self.folder.joinpath(
+                            f"{lang}.{split}.{suffix}{self.bpe.ext}.pth"
+                        )
+                        if not is_valid_file(f):
+                            logger.warning(f"doest not exist {f}")
+        logger.info("create symlinks for XLM ...")
+        XLM_folder = self.folder.joinpath("XLM-syml")
+        XLM_folder.mkdir(exist_ok=True)
+        for lang in self.languages:
+            for split in DATASET_SPLITS:
+                if self.parallel_dataset:
+                    for suffix1, suffix2 in get_all_pairs(self.suffixes):
+                        name_suff1, name_suff2 = [
+                            suffix if "ir_" in suffix else f"{lang}_{suffix}"
+                            for suffix in [suffix1, suffix2]
+                        ]
+                        if name_suff1 > name_suff2:
+                            name_suff1, name_suff2 = name_suff2, name_suff1
+                            suffix1, suffix2 = suffix2, suffix1
+                        for suffix, name_suff in [
+                            (suffix1, name_suff1),
+                            (suffix2, name_suff2),
+                        ]:
+                            if split == "train":
+                                for i in range(self.nb_train_split):
+                                    # when parallel dataset, check files have same number of lines
+                                    if suffix == suffix1:
+                                        check_same_number_of_lines(
+                                            self.folder.joinpath(
+                                                f"{lang}.{split}.{suffix1}.{i}{self.bpe.ext}"
+                                            ),
+                                            self.folder.joinpath(
+                                                f"{lang}.{split}.{suffix2}.{i}{self.bpe.ext}"
+                                            ),
+                                        )
+                                    create_symlink(
+                                        self.folder.joinpath(
+                                            f"{lang}.{split}.{suffix}.{i}{self.bpe.ext}.pth"
+                                        ),
+                                        XLM_folder.joinpath(
+                                            f"{split}.{name_suff1}-{name_suff2}.{name_suff}.{i}.pth"
+                                        ),
+                                    )
+                            else:
+                                if suffix == suffix1:
+                                    check_same_number_of_lines(
+                                        self.folder.joinpath(
+                                            f"{lang}.{split}.{suffix1}{self.bpe.ext}"
+                                        ),
+                                        self.folder.joinpath(
+                                            f"{lang}.{split}.{suffix2}{self.bpe.ext}"
+                                        ),
+                                    )
+                                create_symlink(
+                                    self.folder.joinpath(
+                                        f"{lang}.{split}.{suffix}{self.bpe.ext}.pth"
+                                    ),
+                                    XLM_folder.joinpath(
+                                        f"{split}.{name_suff1}-{name_suff2}.{name_suff}.pth"
+                                    ),
+                                )
+        logger.info("Check and symlink done.")

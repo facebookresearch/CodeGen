@@ -8,9 +8,6 @@
 import sys
 import typing as tp
 from logging import getLogger
-from pathlib import Path
-
-import submitit
 
 from codegen_sources.IR_tools.utils_ir import code_to_ir, ir_had_errors
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import (
@@ -18,16 +15,12 @@ from codegen_sources.preprocessing.dataset_modes.dataset_mode import (
     DatasetMode,
 )
 from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
-from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import REPLACE_DICT
-from codegen_sources.preprocessing.timeout import timeout
 from codegen_sources.preprocessing.utils import (
     check_same_number_of_lines,
     create_symlink,
     get_all_pairs,
-    get_subset_file,
     is_valid_file,
 )
-from submitit import Executor, LocalExecutor
 
 IR_SUFFIXES = ["sa", "ir_sa"]
 logger = getLogger()
