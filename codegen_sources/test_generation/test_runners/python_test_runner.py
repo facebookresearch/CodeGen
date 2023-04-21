@@ -23,7 +23,7 @@ from ...model.src.utils import (
     limit_virtual_memory,
     MAX_VIRTUAL_MEMORY,
 )
-from ...preprocessing.lang_processors.lang_processor import PythonTreeSitterProcessor
+from ...preprocessing.lang_processors import PythonTreeSitterProcessor
 
 sys.path.append(str(Path(__file__).parents[3]))
 print("adding to path", str(Path(__file__).parents[3]))
