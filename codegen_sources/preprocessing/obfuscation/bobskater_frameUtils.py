@@ -4,8 +4,8 @@
 Utility classes for tracking identifiers in Python scopes
 """
 
-import builtins  # Do not use __builtins__, it's different in different implementations (like IPython vs CPython)
 import ast
+import builtins  # Do not use __builtins__, it's different in different implementations (like IPython vs CPython)
 
 
 # TODO: After coming back to this a second time, the names aren't really sticking,
@@ -21,7 +21,7 @@ class Frame:
 
     __slots__ = ["source", "parent", "children", "ids"]
 
-    def __init__(self, source=None, parent=None, children=None, ids=None):
+    def __init__(self, source=None, parent=None, children=None, ids=None) -> None:
         self.source = source
         self.parent = parent
         self.children = children or []
@@ -167,7 +167,9 @@ class FrameEntry:
 
     __slots__ = ["source", "parent", "ctx", "value", "id", "scopeParent"]
 
-    def __init__(self, id, source=None, ctx=ast.Store(), scope=None, value=None):
+    def __init__(
+        self, id, source=None, ctx=ast.Store(), scope=None, value=None
+    ) -> None:
         self.source = source
         self.ctx = ctx
         self.value = value

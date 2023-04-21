@@ -164,6 +164,8 @@ def load_mono_data(params, data):
             # no need to load training data for evaluation
             if splt in TRAIN_SPLITS and params.eval_only:
                 continue
+            if splt not in TRAIN_SPLITS and params.train_only:
+                continue
             # load data / update dictionary parameters / update data
             mono_data = load_binarized(data_path, params)
             set_dico_parameters(params, data, mono_data["dico"])
@@ -197,6 +199,7 @@ def load_mono_data(params, data):
                 in [l1 for l1, l2 in params.cmt_steps]
                 + [l1 for l1, l2 in params.disc_steps]
                 or (lang in params.st_src_langs and splt == SELF_TRAINED)
+                or lang in params.eval_computation_pivot_self
             ):
 
                 # create batched dataset
@@ -208,9 +211,9 @@ def load_mono_data(params, data):
                     unit_tests_st=splt == SELF_TRAINED,
                 )
                 # remove empty and too long sentences
-                if splt in TRAIN_SPLITS:
-                    dataset.remove_empty_sentences()
-                    dataset.remove_long_sentences(params.max_len)
+                # if splt in TRAIN_SPLITS:
+                dataset.remove_empty_sentences()
+                dataset.remove_long_sentences(params.max_len)
                 if splt == SELF_TRAINED:
                     dataset.compute_st_scores(params, data["dico"])
                     data[f"java_st_unit_tests"] = dataset.unit_tests
@@ -247,6 +250,7 @@ def load_para_data(params, data):
         + params.mt_spans_steps
         + params.do_steps
         + params.classif_steps
+        + params.tae_steps
     )
 
     for key in params.para_dataset.keys():
@@ -267,6 +271,8 @@ def load_para_data(params, data):
 
             # no need to load training data for evaluation
             if splt in TRAIN_SPLITS and params.eval_only:
+                continue
+            if splt not in TRAIN_SPLITS and params.train_only:
                 continue
 
             # for back-translation, we can't load training data
@@ -307,6 +313,7 @@ def load_para_data(params, data):
             if span_data is not None:
                 sent_list.append(span_data["sentences"])
                 pos_list.append(span_data["positions"])
+            print(f"loading parallel {splt} {src}, {tgt} data")
             dataset = ParallelDataset(
                 sent_list,
                 pos_list,
@@ -319,10 +326,6 @@ def load_para_data(params, data):
             # if splt == 'train':
             dataset.remove_empty_sentences()
             dataset.remove_long_sentences(params.max_len)
-
-            # for validation and test set, enumerate sentence per sentence
-            if splt != "train":
-                dataset.tokens_per_batch = -1
 
             # if there are several processes on the same machine, we can split the dataset
             if splt in TRAIN_SPLITS and params.n_gpu_per_node > 1 and params.split_data:
@@ -344,8 +347,10 @@ def check_data_params(params):
     Check datasets parameters.
     """
     # data path
-    assert os.path.isdir(params.data_path), params.data_path
+    assert os.path.isdir(params.data_path), f"Not a directory: {params.data_path}"
 
+    if params.eval_tokens_per_batch is None:
+        params.eval_tokens_per_batch = params.tokens_per_batch
     # check languages
     params.langs = params.lgs.split("-") if params.lgs != "debug" else ["en"]
     assert len(params.langs) == len(set(params.langs)) >= 1, [
@@ -428,7 +433,7 @@ def check_data_params(params):
     assert all([len(x) == 2 for x in params.do_steps])
     assert all(
         [l1 in params.langs and l2 in params.langs for l1, l2 in params.do_steps]
-    )
+    ), f"One or more step of {params.do_steps} is not in languages {params.langs}"
     assert all([l1 != l2 for l1, l2 in params.do_steps])
     assert len(params.do_steps) == len(set(params.do_steps))
 
@@ -452,6 +457,15 @@ def check_data_params(params):
     assert len(params.ae_steps) == len(set(params.ae_steps))
     assert len(params.ae_steps) == 0 or not params.encoder_only
 
+    params.tae_steps = [
+        tuple(s.split("-")) for s in params.tae_steps.split(",") if len(s) > 0
+    ]
+    assert all([lang in params.langs for langs in params.tae_steps for lang in langs])
+    assert len(params.tae_steps) == len(
+        set(params.tae_steps)
+    ), f"non unique elements in {params.tae_steps}"
+    assert len(params.tae_steps) == 0 or not params.encoder_only
+
     # back-translation steps
     params.bt_steps = [
         tuple(s.split("-")) for s in params.bt_steps.split(",") if len(s) > 0
@@ -469,11 +483,13 @@ def check_data_params(params):
     params.bt_src_langs = [l1 for l1, _, _ in params.bt_steps]
 
     # self-training steps
-    params.st_steps = [
-        (s.split("-")[0], tuple(s.split("-")[1].split("|")))
-        for s in params.st_steps.split(",")
-        if len(s) > 0
-    ]
+    params.st_steps = sorted(
+        [
+            (s.split("-")[0], tuple(s.split("-")[1].split("|")))
+            for s in params.st_steps.split(",")
+            if len(s) > 0
+        ]
+    )
     assert all([len(x) == 2 for x in params.st_steps])
 
     assert all(
@@ -495,6 +511,37 @@ def check_data_params(params):
         # unit tests path
         assert os.path.isfile(params.unit_tests_path), params.unit_tests_path
 
+    # pairs for which we should evaluate computationally with pivot
+    params.eval_computation_pivot = sorted(
+        [
+            tuple(s.split("-"))
+            for s in params.eval_computation_pivot.split(",")
+            if len(s) > 0
+        ]
+    )
+    params.eval_computation_pivot_self = sorted(
+        [x[0] for x in params.eval_computation_pivot if len(x) == 1]
+    )
+    params.eval_computation_pivot = sorted(
+        [x for x in params.eval_computation_pivot if len(x) != 1]
+    )
+
+    assert all([len(x) == 2 for x in params.eval_computation_pivot])
+
+    assert all(
+        [
+            l1 in params.langs and l2 in params.langs
+            for l1, l2 in params.eval_computation_pivot
+        ]
+    )
+
+    assert all(
+        [l in params.langs for l in params.eval_computation_pivot_self]
+    ), params.eval_computation_pivot_self
+
+    assert all([l1 != l2 for l1, l2 in params.eval_computation_pivot])
+    assert len(params.eval_computation_pivot) == len(set(params.eval_computation_pivot))
+
     # check monolingual datasets
     required_mono = set(
         [l1 for l1, l2 in (params.mlm_steps + params.clm_steps) if l2 is None]
@@ -509,6 +556,14 @@ def check_data_params(params):
         for lang in params.langs
         if lang in required_mono
     }
+    for lang in params.eval_computation_pivot_self:
+        if lang not in params.mono_dataset:
+            params.mono_dataset[lang] = dict()
+        for splt in [s for s in DATASET_SPLITS if s not in TRAIN_SPLITS]:
+            params.mono_dataset[lang][splt] = os.path.join(
+                params.data_path, "%s.%s.pth" % (splt, lang)
+            )
+
     for lang in params.st_src_langs:
         if lang not in params.mono_dataset:
             params.mono_dataset[lang] = dict()
@@ -520,7 +575,10 @@ def check_data_params(params):
             if not os.path.isfile(p):
                 logger.error(f"{p} not found")
 
-    if not params.eval_only:
+    assert not (params.eval_only and params.train_only)
+    if params.train_only:
+        assert params.stopping_criterion == ""
+    if not (params.eval_only or params.train_only):
         assert all(
             [
                 all(
@@ -549,6 +607,7 @@ def check_data_params(params):
         + params.mt_steps
         + params.classif_steps
         + params.do_steps
+        + params.tae_steps
     )
     required_para = (
         required_para_train
@@ -565,6 +624,75 @@ def check_data_params(params):
             ]
         )
     )
+
+    # pairs for which we should evaluate computationally
+    if params.eval_computation.lower() == "false" or params.eval_computation == "1":
+        params.eval_computation = ""
+    if (
+        params.eval_computation.lower() == "true"
+        or params.eval_computation == "1"
+        or params.eval_computation.lower() == "all"
+    ):
+        params.eval_computation = list(required_para)
+    else:
+        params.eval_computation = [
+            tuple(s.split("-"))
+            for s in params.eval_computation.split(",")
+            if len(s) > 0
+        ]
+
+        assert all([len(x) == 2 for x in params.eval_computation])
+        assert all(
+            [
+                l1 in params.langs and l2 in params.langs
+                for l1, l2 in params.eval_computation
+            ]
+        )
+        assert all([l1 != l2 for l1, l2 in params.eval_computation])
+        assert len(params.eval_computation) == len(set(params.eval_computation))
+
+        required_para |= set(params.eval_computation)
+
+    params.eval_computation.sort()
+
+    # pairs for which we should evaluate by recomputing the IR
+    if params.eval_ir_similarity.lower() == "false" or params.eval_ir_similarity == "1":
+        params.eval_ir_similarity = ""
+    if (
+        params.eval_ir_similarity.lower() == "true"
+        or params.eval_ir_similarity == "1"
+        or params.eval_ir_similarity.lower() == "all"
+    ):
+        params.eval_ir_similarity = [
+            (lang1, lang2) for lang1, lang2 in required_para if "ir" in lang1
+        ]
+    else:
+        params.eval_ir_similarity = [
+            tuple(s.split("-"))
+            for s in params.eval_ir_similarity.split(",")
+            if len(s) > 0
+        ]
+
+    assert all([len(x) == 2 for x in params.eval_ir_similarity])
+    assert all(
+        [
+            l1 in params.langs and l2 in params.langs
+            for l1, l2 in params.eval_ir_similarity
+        ]
+    )
+    assert all([l1 != l2 for l1, l2 in params.eval_ir_similarity])
+    assert len(params.eval_ir_similarity) == len(set(params.eval_ir_similarity))
+
+    required_para |= set(params.eval_ir_similarity)
+    params.eval_ir_similarity.sort()
+
+    required_para |= set(params.eval_computation_pivot)
+
+    if len(params.eval_computation_pivot) > 0:
+        assert os.path.exists(
+            params.pivot_bpe_model
+        ), f"'{params.pivot_bpe_model}' not found, required for ir pivot"
+        params.eval_computation_pivot.sort()
 
     params.para_dataset = {
         (src, tgt): {
@@ -656,11 +784,23 @@ def check_data_params(params):
             for split, langs in params.has_sentence_ids
         ]
     ), params.has_sentence_ids
+    print(f"Datasets with IDs: {params.has_sentence_ids}")
     assert len(set(params.has_sentence_ids)) == len(params.has_sentence_ids)
-
     assert (
         len(params.mono_dataset) > 0 or len(params.para_dataset) > 0
     ), "No dataset to be loaded, you probably forget to set a training step."
+    for l1, l2 in params.eval_computation + params.eval_computation_pivot:
+        if l1 < l2:
+            for splt in DATASET_SPLITS:
+                if splt not in TRAIN_SPLITS:
+                    assert (
+                        splt,
+                        (l1, l2),
+                    ) in params.has_sentence_ids, f"computation eval for {(splt, (l1, l2))} but no sentence ids: {params.has_sentence_ids}"
+
+    params.bt_max_len = (
+        params.max_len if params.bt_max_len is None else params.bt_max_len
+    )
     # assert all([all([os.path.isfile(p1) and os.path.isfile(p2) for p1, p2 in paths.values()]) for paths in params.para_dataset.values()])
 
     # check that we can evaluate on BLEU

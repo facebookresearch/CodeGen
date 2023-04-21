@@ -6,6 +6,7 @@
 
 
 import os
+import typing as tp
 
 from stringcase import snakecase
 
@@ -56,20 +57,21 @@ def run_subtoken_score(ref, hyp, subtoken_average=False, all_beams=False):
         return subtoken_score_on_lines(hyps, refs)
 
 
-def subtoken_score_on_lines(hyps_list, refs):
+def subtoken_score_on_lines(
+    hyps_list: tp.List[tp.List[str]], refs: tp.List[str]
+) -> tp.Dict[str, float]:
     precisions, recalls, f1_scores = [], [], []
     count_exact_matches = 0
     for hyps, ref in zip(hyps_list, refs):
         matches = {}
         for obfuscated, deobfuscated in [
-            (entry.strip().split(" ")[0], entry.strip().split(" ")[1])
-            for entry in ref.split("|")
+            entry.strip().split(" ", maxsplit=1) for entry in ref.split("|")
         ]:
             assert obfuscated not in matches
             matches[obfuscated] = {"ref": deobfuscated}
         for hyp_index, hyp in enumerate(hyps):
             for entry in hyp.split("|"):
-                split = entry.strip().split(" ")
+                split = entry.strip().split(" ", maxsplit=1)
                 if len(split) < 2:
                     continue
                 else:

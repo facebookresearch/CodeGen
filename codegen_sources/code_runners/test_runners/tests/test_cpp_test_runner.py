@@ -1,18 +1,11 @@
-# Copyright (c) 2019-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
 from pathlib import Path
 
 import os
 
-from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
-from codegen_sources.model.src.utils import TREE_SITTER_ROOT
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.code_runners.test_runners import CppEvosuiteTestRunner
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 
-cpp_processor = LangProcessor.processors["cpp"](root_folder=TREE_SITTER_ROOT)
+cpp_processor = LangProcessor.processors["cpp"]()
 
 
 TEST_SIGMOID = """#include <iostream>
@@ -50,7 +43,7 @@ int main(int argc, char **argv) {
 
 
 def test_runner_on_sigmoid_success():
-    cpp_runner = CppTestRunner()
+    cpp_runner = CppEvosuiteTestRunner()
     sigmoid = """double sigmoid ( double input ){
     return 1.0 / ( 1.0 + ( exp ( - input ) ) );
     }"""
@@ -62,7 +55,7 @@ def test_runner_on_sigmoid_success():
 
 
 def test_runner_on_bad_sigmoid_fails():
-    cpp_runner = CppTestRunner()
+    cpp_runner = CppEvosuiteTestRunner()
     sigmoid = """double sigmoid ( double input ){
     return 0.5;
     }"""
@@ -74,7 +67,7 @@ def test_runner_on_bad_sigmoid_fails():
 
 
 def test_runner_on_bad_sigmoid_compilation_error():
-    cpp_runner = CppTestRunner()
+    cpp_runner = CppEvosuiteTestRunner()
     sigmoid = """double sigmoid ( double input ){
         return 1.0 / ( 1.0 + ( exp ( - input ) ) )
     }"""
@@ -86,7 +79,7 @@ def test_runner_on_bad_sigmoid_compilation_error():
 
 
 def test_runner_on_sigmoid_np_timeout():
-    cpp_runner = CppTestRunner(timeout=1)
+    cpp_runner = CppEvosuiteTestRunner(timeout=1)
     sigmoid = """double sigmoid ( double input ){
     sleep(10);
     return 1;
@@ -102,7 +95,7 @@ def test_runner_on_sigmoid_np_timeout():
 def test_firejail_keeps_from_writing():
     if os.environ.get("CI", False):
         return
-    cpp_runner = CppTestRunner(timeout=20)
+    cpp_runner = CppEvosuiteTestRunner(timeout=20)
     test_out_path = Path(__file__).parent.joinpath(
         "test_output_should_not_be_written_cpp.out"
     )
@@ -166,7 +159,7 @@ int main(int argc, char **argv) {
 
 
 def test_runner_on_lattitude_success():
-    cpp_runner = CppTestRunner()
+    cpp_runner = CppEvosuiteTestRunner()
     lattitude = "double getLatitudeFromY ( double inY ) { double n = M_PI * ( 1 - 2 * inY ) ; return 180 / M_PI * atan ( 0.5 * ( exp ( n ) - exp ( - n ) ) ) ; }"
     lattitude = " ".join(cpp_processor.tokenize_code(lattitude))
     res, tests, failures = cpp_runner.get_tests_results(lattitude, TEST_LATTITUDE)

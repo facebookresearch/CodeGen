@@ -12,18 +12,11 @@
 
 import os
 import argparse
+import typing as tp
 from pathlib import Path
 import sys
 import torch
 from codegen_sources.model.src.logger import create_logger
-from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
-from codegen_sources.preprocessing.lang_processors.python_processor import (
-    PythonProcessor,
-)
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
-from codegen_sources.preprocessing.bpe_modes.fast_bpe_mode import FastBPEMode
-from codegen_sources.preprocessing.bpe_modes.roberta_bpe_mode import RobertaBPEMode
 from codegen_sources.model.src.data.dictionary import (
     Dictionary,
     BOS_WORD,
@@ -32,16 +25,18 @@ from codegen_sources.model.src.data.dictionary import (
     UNK_WORD,
     MASK_WORD,
 )
-from codegen_sources.model.src.utils import restore_roberta_segmentation_sentence
+from codegen_sources.model.src.utils import bool_flag
+from codegen_sources.model.src.constants import SUPPORTED_LANGUAGES_FOR_TESTS
 from codegen_sources.model.src.model import build_model
-from codegen_sources.model.src.utils import AttrDict, TREE_SITTER_ROOT
+from codegen_sources.model.src.utils import AttrDict
+import codegen_sources.dataloaders.transforms as transf
 
-SUPPORTED_LANGUAGES = ["cpp", "java", "python"]
 
+SUPPORTED_LANGUAGES = list(SUPPORTED_LANGUAGES_FOR_TESTS) + ["ir"]
 logger = create_logger(None, 0)
 
 
-def get_parser():
+def get_params():
     """
     Generate a parameters parser.
     """
@@ -79,21 +74,35 @@ def get_parser():
     parser.add_argument(
         "--input", type=str, default=None, help="input path",
     )
+    parser.add_argument(
+        "--gpu", type=bool_flag, default=True, help="input path",
+    )
+    parser.add_argument(
+        "--efficient_attn",
+        type=str,
+        default=None,
+        choices=["None", "flash", "cutlass", "fctls_bflsh", "auto"],
+        help="If set, uses efficient attention from xformers.",
+    )
+    parameters = parser.parse_args()
+    if parameters.efficient_attn == "None":
+        parameters.efficient_attn = None
 
-    return parser
+    return parameters
 
 
 class Translator:
-    def __init__(self, model_path, BPE_path):
+    def __init__(self, model_path, BPE_path, gpu=True, efficient_attn=None) -> None:
+        self.gpu = gpu
         # reload model
         reloaded = torch.load(model_path, map_location="cpu")
         # change params of the reloaded model so that it will
         # relaod its own weights and not the MLM or DOBF pretrained model
-        reloaded["params"]["reload_model"] = ",".join([model_path] * 2)
+        reloaded["params"]["reload_model"] = ",".join([str(model_path)] * 2)
         reloaded["params"]["lgs_mapping"] = ""
         reloaded["params"]["reload_encoder_for_decoder"] = False
         self.reloaded_params = AttrDict(reloaded["params"])
-
+        self.reloaded_params["efficient_attn"] = efficient_attn
         # build dictionary / update parameters
         self.dico = Dictionary(
             reloaded["dico_id2word"], reloaded["dico_word2id"], reloaded["dico_counts"]
@@ -106,91 +115,78 @@ class Translator:
         assert self.reloaded_params.mask_index == self.dico.index(MASK_WORD)
 
         # build model / reload weights (in the build_model method)
-        encoder, decoder = build_model(self.reloaded_params, self.dico)
+        encoder, decoder = build_model(self.reloaded_params, self.dico, self.gpu)
         self.encoder = encoder[0]
         self.decoder = decoder[0]
-        self.encoder.cuda()
-        self.decoder.cuda()
+        if gpu:
+            self.encoder.cuda()
+            self.decoder.cuda()
         self.encoder.eval()
         self.decoder.eval()
 
         # reload bpe
-        if getattr(self.reloaded_params, "roberta_mode", False):
-            self.bpe_model = RobertaBPEMode()
+        if (
+            self.reloaded_params.get("roberta_mode", False)
+            or self.reloaded_params.get("tokenization_mode", "") == "roberta"
+        ):
+            self.bpe_transf: transf.BpeBase = transf.RobertaBpe()
+            raise ValueError("This part has not be tested thoroughly yet")
         else:
-            self.bpe_model = FastBPEMode(
-                codes=os.path.abspath(BPE_path), vocab_path=None
-            )
+            self.bpe_transf = transf.FastBpe(code_path=Path(BPE_path).absolute())
 
     def translate(
         self,
         input_code,
-        lang1,
-        lang2,
-        suffix1="_sa",
-        suffix2="_sa",
-        n=1,
-        beam_size=1,
+        lang1: str,
+        lang2: str,
+        suffix1: str = "_sa",
+        suffix2: str = "_sa",
+        n: int = 1,
+        beam_size: int = 1,
         sample_temperature=None,
-        device="cuda:0",
+        device=None,
         tokenized=False,
-        detokenize=True,
-        max_tokens=None,
-        length_penalty=0.5,
-        max_len=None,
+        detokenize: bool = True,
+        max_tokens: tp.Optional[int] = None,
+        length_penalty: float = 0.5,
+        max_len: tp.Optional[int] = None,
     ):
+        if device is None:
+            device = "cuda:0" if self.gpu else "cpu"
 
         # Build language processors
         assert lang1 in SUPPORTED_LANGUAGES, lang1
         assert lang2 in SUPPORTED_LANGUAGES, lang2
-        src_lang_processor = LangProcessor.processors[lang1](
-            root_folder=TREE_SITTER_ROOT
+        bpetensorizer = transf.BpeTensorizer()
+        bpetensorizer.dico = self.dico  # TODO: hacky
+        in_pipe: transf.Transform[tp.Any, torch.Tensor] = self.bpe_transf.pipe(
+            bpetensorizer
         )
-        tokenizer = src_lang_processor.tokenize_code
-        tgt_lang_processor = LangProcessor.processors[lang2](
-            root_folder=TREE_SITTER_ROOT
-        )
-        detokenizer = tgt_lang_processor.detokenize_code
+        out_pipe = in_pipe
+        if not tokenized:
+            in_pipe = transf.CodeTokenizer(lang1).pipe(in_pipe)
+        if detokenize:
+            out_pipe = transf.CodeTokenizer(lang2).pipe(out_pipe)
 
         lang1 += suffix1
         lang2 += suffix2
-
-        assert (
-            lang1 in self.reloaded_params.lang2id.keys()
-        ), f"{lang1} should be in {self.reloaded_params.lang2id.keys()}"
-        assert (
-            lang2 in self.reloaded_params.lang2id.keys()
-        ), f"{lang2} should be in {self.reloaded_params.lang2id.keys()}"
+        avail_langs = list(self.reloaded_params.lang2id.keys())
+        for lang in [lang1, lang2]:
+            if lang not in avail_langs:
+                raise ValueError(f"{lang} should be in {avail_langs}")
 
         with torch.no_grad():
 
             lang1_id = self.reloaded_params.lang2id[lang1]
             lang2_id = self.reloaded_params.lang2id[lang2]
 
-            # Convert source code to ids
-            if tokenized:
-                tokens = input_code.strip().split()
-            else:
-                tokens = [t for t in tokenizer(input_code)]
-            print(f"Tokenized {lang1} function:")
-            print(tokens)
-            tokens = self.bpe_model.apply_bpe(" ".join(tokens)).split()
-            tokens = ["</s>"] + tokens + ["</s>"]
-            input_code = " ".join(tokens)
-            if max_tokens is not None and len(input_code.split()) > max_tokens:
-                logger.info(
-                    f"Ignoring long input sentence of size {len(input_code.split())}"
-                )
-                return [f"Error: input too long: {len(input_code.split())}"] * max(
-                    n, beam_size
-                )
-
             # Create torch batch
-            len1 = len(input_code.split())
-            len1 = torch.LongTensor(1).fill_(len1).to(device)
-            x1 = torch.LongTensor([self.dico.index(w) for w in input_code.split()]).to(
-                device
-            )[:, None]
+            x1 = in_pipe.apply(input_code).to(device)[:, None]
+            size = x1.shape[0]
+            len1 = torch.LongTensor(1).fill_(size).to(device)
+            if max_tokens is not None and size > max_tokens:
+                logger.info(f"Ignoring long input sentence of size {size}")
+                return [f"Error: input too long: {size}"] * max(n, beam_size)
             langs1 = x1.clone().fill_(lang1_id)
 
             # Encode
@@ -227,24 +223,13 @@ class Translator:
             # Convert out ids to text
             tok = []
             for i in range(x2.shape[1]):
-                wid = [self.dico[x2[j, i].item()] for j in range(len(x2))][1:]
-                wid = wid[: wid.index(EOS_WORD)] if EOS_WORD in wid else wid
-                if getattr(self.reloaded_params, "roberta_mode", False):
-                    tok.append(restore_roberta_segmentation_sentence(" ".join(wid)))
-                else:
-                    tok.append(" ".join(wid).replace("@@ ", ""))
-            if not detokenize:
-                return tok
-            results = []
-            for t in tok:
-                results.append(detokenizer(t))
-            return results
+                tok.append(out_pipe.revert(x2[:, i]))
+            return tok
 
 
 if __name__ == "__main__":
     # generate parser / parse parameters
-    parser = get_parser()
-    params = parser.parse_args()
+    params = get_params()
 
     # check parameters
     assert os.path.isfile(
@@ -264,10 +249,11 @@ if __name__ == "__main__":
     ), f"The target language should be in {SUPPORTED_LANGUAGES}."
 
     # Initialize translator
-    translator = Translator(params.model_path, params.BPE_path)
+    translator = Translator(
+        params.model_path, params.BPE_path, params.gpu, params.efficient_attn
+    )
 
     # read input code from stdin
-    src_sent = []
     input = (
         open(params.input).read().strip()
         if params.input is not None

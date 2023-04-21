@@ -9,16 +9,16 @@ from logging import getLogger
 
 import torch
 
-from .transformer import TransformerModel
 from ..data.dictionary import (
-    Dictionary,
     BOS_WORD,
     EOS_WORD,
+    MASK_WORD,
     PAD_WORD,
     UNK_WORD,
-    MASK_WORD,
+    Dictionary,
 )
 from ..utils import AttrDict
+from .transformer import TransformerModel
 
 logger = getLogger()
 
@@ -62,7 +62,7 @@ class SentenceEmbedder(object):
 
         return SentenceEmbedder(model, dico, pretrain_params)
 
-    def __init__(self, model, dico, pretrain_params):
+    def __init__(self, model, dico, pretrain_params) -> None:
         """
         Wrapper on top of the different sentence embedders.
         Returns sequence-wise or single-vector sentence representations.

@@ -6,27 +6,25 @@
 #
 # Translate sentences from the input stream.
 # The model will be faster is sentences are sorted by length.
-# Input sentences must have the same tokenization and BPE codes than the ones used in the model.
-#
+# Input sentences must have the same tokenization and BPE codes than the ones
+# used in the model.
 
 import argparse
+import typing as tp
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from itertools import repeat
 from pathlib import Path
 
 import numpy as np
-from submitit import AutoExecutor, LocalExecutor
+import submitit
 from tqdm import tqdm
 
-from utils import add_root_to_path
-
-add_root_to_path()
-from codegen_sources.model.src.utils import (
+from codegen_sources.preprocessing.lang_processors.java_processor import (
     get_java_compilation_errors,
-    TREE_SITTER_ROOT,
 )
-from codegen_sources.preprocessing.lang_processors.java_processor import JavaProcessor
+
+from codegen_sources.preprocessing.lang_processors import JavaProcessor
 from codegen_sources.preprocessing.utils import bool_flag
 from codegen_sources.test_generation.utils import chunks
 
@@ -104,7 +102,7 @@ def is_simple_standalone_func(func):
 def select_functions(funcpath):
     executor = ThreadPoolExecutor()
     global java_processor
-    java_processor = JavaProcessor(TREE_SITTER_ROOT)
+    java_processor = JavaProcessor()
     jobs = []
     with open(funcpath, "r") as f:
         functions = list(set([line.split(" | ", 1)[1] for line in f.readlines()]))
@@ -148,12 +146,11 @@ if __name__ == "__main__":
     assert input_path.is_dir()
     output_path = Path(args.output_path)
     output_path.mkdir(parents=True, exist_ok=True)
+    cluster: tp.Optional[submitit.AutoExecutor] = None
     if args.local is False:
-        cluster = AutoExecutor(output_path.joinpath("log"))
+        cluster = submitit.AutoExecutor(output_path / "log")
         cluster.update_parameters(cpus_per_task=80, mem_gb=300)
         cluster.update_parameters(timeout_min=40)
-    else:
-        cluster = None
     tok_files_names = "java.[0-9]*.sa.tok"
     tok_files = sorted(list(input_path.glob(tok_files_names)))
     if not args.rerun:

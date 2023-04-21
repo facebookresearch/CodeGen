@@ -8,6 +8,7 @@
 from pathlib import Path
 
 from codegen_sources.preprocessing.lang_processors.cpp_processor import CppProcessor
+from codegen_sources.preprocessing.tests.obfuscation.utils import diff_tester
 from codegen_sources.preprocessing.tests.tokenization.tokenization_tests_utils import (
     tokenizer_test,
     detokenize_non_invertible,
@@ -693,7 +694,7 @@ int func0()
 }
 int func1(int u,int v)
 {
-	return 1; 
+	return 1;
 }
 void func2()
 {
@@ -708,6 +709,34 @@ void func2()
             [],
         ),
     ),
+    (
+        """
+question::question(string ques){
+this->ques = ques;
+};""",
+        ([], ["question :: question ( string ques ) { this -> ques = ques ; }"]),
+    ),
+    (
+        """class Rectangle {
+    int width, height;
+  public:
+    Rectangle ();
+    Rectangle (int,int);
+    int area (void) {return (width*height);}
+};
+
+Rectangle::Rectangle () {
+  width = 5;
+  height = 5;
+}""",
+        (
+            [],
+            [
+                "int area ( void ) { return ( width * height ) ; }",
+                "Rectangle :: Rectangle ( ) { width = 5 ; height = 5 ; }",
+            ],
+        ),
+    ),
 ]
 
 
@@ -720,3 +749,23 @@ def test_extract_cpp_functions():
         expected_sa, expected_cl = expected_funcs
         compare_funcs(actual_funcs_sa, expected_sa)
         compare_funcs(actual_funcs_cl, expected_cl)
+
+
+def test_formatter():
+    input_f = """static int factorial  (int  n ){ if (n == 0) return 1; return n * factorial(n-1);}"""
+    expected = """static int factorial(int n) {
+  if (n == 0)
+    return 1;
+  return n * factorial(n - 1);
+}"""
+    actual = processor.format(input_f)
+    diff_tester(expected, actual)
+
+
+def test_formatter_partial_code():
+    input_f = """static int factorial  (int  n ){ if """
+
+    expected = """static int factorial(int n) {
+  if"""
+    actual = processor.format(input_f)
+    diff_tester(expected, actual)

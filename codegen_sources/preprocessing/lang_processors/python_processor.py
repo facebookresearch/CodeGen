@@ -4,23 +4,23 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
-from codegen_sources.preprocessing.lang_processors.tokenization_utils import (
-    process_string,
-)
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+import re
+import tokenize
+import typing as tp
+from io import BytesIO
+
+import black  # type: ignore
+
 from codegen_sources.preprocessing.obfuscation.bobskater_obfuscator import (
     obfuscateString,
 )
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import dico_to_string
-
-import tokenize
-from io import BytesIO
-import re
+from .lang_processor import LangProcessor, NEWLINE_TOK
+from .tokenization_utils import process_string
 
 
 class PythonProcessor(LangProcessor):
-    def __init__(self, root_folder=None):
-
+    def __init__(self) -> None:
         self.spetoken2char = {
             "STOKEN00": "#",
             "STOKEN1": "\\n",
@@ -30,7 +30,10 @@ class PythonProcessor(LangProcessor):
         self.char2spetoken = {
             value: " " + key + " " for key, value in self.spetoken2char.items()
         }
-        self.language = "python"
+
+    @property
+    def language(self) -> str:
+        return "py"  # TODO would "python" (default) be breaking stuff? this is unclear
 
     def tokenize_code(self, code, keep_comments=False, process_strings=True):
         assert isinstance(code, str)
@@ -57,7 +60,7 @@ class PythonProcessor(LangProcessor):
                     f'Impossible to parse tokens because of incorrect source code "{e}" ...'
                 )
             except StopIteration:
-                raise Exception(f"End of iterator before ENDMARKER token.")
+                raise StopIteration(f"End of iterator before ENDMARKER token.")
 
             if toktype == tokenize.ENCODING or toktype == tokenize.NL:
                 continue
@@ -66,7 +69,7 @@ class PythonProcessor(LangProcessor):
                 if removed_docstr == 1:
                     removed_docstr = 0
                     continue
-                tokens.append("NEW_LINE")
+                tokens.append(NEWLINE_TOK)
 
             elif toktype == tokenize.COMMENT:
                 if keep_comments:
@@ -136,9 +139,9 @@ class PythonProcessor(LangProcessor):
         assert isinstance(code, str) or isinstance(code, list)
         if isinstance(code, list):
             code = " ".join(code)
-        code = code.replace("ENDCOM", "NEW_LINE")
+        code = code.replace("ENDCOM", NEWLINE_TOK)
         code = code.replace("▁", "SPACETOKEN")
-        lines = code.split("NEW_LINE")
+        lines = code.split(NEWLINE_TOK)
         tabs = ""
         for i, line in enumerate(lines):
             line = line.strip()
@@ -195,29 +198,19 @@ class PythonProcessor(LangProcessor):
         res, dico = obfuscateString(code, obfuscateNames=True, removeDocstrings=False)
         return res, dico_to_string(dico)
 
-    def extract_functions(self, tokenized_code: str):
+    def extract_functions(
+        self, code: tp.Union[str, tp.List[str]], tokenized: bool = True,
+    ) -> tp.Tuple[tp.List[str], tp.List[str]]:
         """Extract functions from tokenized python code"""
-        if isinstance(tokenized_code, str):
-            tokenized_code = tokenized_code.split()
+        if not tokenized:
+            raise ValueError(
+                "Function extraction not available for PythonProcessor and untokenized files. Please use PythonTreeSitterProcessor"
+            )
+        if isinstance(code, str):
+            tokenized_code = code.split()
         else:
-            assert isinstance(tokenized_code, list)
-            tokenized_code = tokenized_code
-
-        def filter_functions_python_2_3(function):
-            if (
-                re.search("print [^(]", function) is None
-                and re.search("raise \w+ ,", function) is None
-                and re.search("except \w+ ,", function) is None
-                and re.search("[^ ]+ = \d+ L", function) is None
-                and ". iterkeys ( )" not in function
-                and ". itervalues ( )" not in function
-                and ". iteritems ( )" not in function
-                and "xrange (" not in function
-                and "imap (" not in function
-            ):
-                return function
-            else:
-                return None
+            tokenized_code = code
+        assert isinstance(tokenized_code, list)
 
         tokens = iter(tokenized_code)
         functions_standalone = []
@@ -239,14 +232,16 @@ class PythonProcessor(LangProcessor):
                             number_indent -= 1
                         function.append(token)
                     try:
+                        str_function = " ".join(function)
+                        if is_python_2(str_function):
+                            token = next(tokens)
+                            continue
                         if function[function.index("(") + 1] == "self":
-                            function = filter_functions_python_2_3(" ".join(function))
-                            if function is not None:
-                                functions_class.append(function)
+                            functions_class.append(str_function)
                         else:
-                            function = filter_functions_python_2_3(" ".join(function))
-                            if function is not None:
-                                functions_standalone.append(function)
+                            functions_standalone.append(str_function)
+                    except KeyboardInterrupt:
+                        raise
                     except:
                         print(function)
                         token = next(tokens)
@@ -261,3 +256,36 @@ class PythonProcessor(LangProcessor):
         if isinstance(function, str):
             function = function.split()
         return function[function.index("def") + 1]
+
+    @staticmethod
+    def format(code: str) -> str:
+        """normalizes the input code by formatting it"""
+        return apply_black(code)
+
+
+def is_python_2(code: str) -> bool:
+    if (
+        re.search("print [^(]", code) is None
+        and re.search("raise \w+ ,", code) is None
+        and re.search("except \w+ ,", code) is None
+        and re.search("[^ ]+ = \d+ L", code) is None
+        and re.search(".[ ]*iterkeys[ ]*\([ ]*\)", code) is None
+        and re.search(".[ ]*itervalues[ ]*\([ ]*\)", code) is None
+        and re.search(".[ ]*iteritems[ ]*\([ ]*\)", code) is None
+        and re.search("xrange[ ]*\(", code) is None
+        and re.search("imap[ ]*\(", code) is None
+    ):
+        return False
+    else:
+        return True
+
+
+def apply_black(code: str, line_length: int = 88):
+    """Apply black to code"""
+    try:
+        mode = black.FileMode(line_length=line_length)
+        return black.format_str(code, mode=mode)
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        return code

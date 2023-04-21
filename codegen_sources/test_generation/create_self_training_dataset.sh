@@ -8,16 +8,16 @@
 
 set -e
 
-JAVA_FUNC_DATASET=$1
-PATH_TO_TRANSLATION_MODELS=$2
-ST_OUTPUT_ROOT_DIR=$3
+JAVA_FUNC_DATASET=$1 # "/private/home/broz/datasets/CodeGen/data/CodeGen_datasets/cpp_java_python_function_level_XLM_test/"
+PATH_TO_TRANSLATION_MODELS=$2 # "/checkpoint/broz/Transcoder_saved_models/"
+ST_OUTPUT_ROOT_DIR=$3 # "/private/home/broz/data/automatic_tests/test_data/"
 RUN_SCRIPT_LOCALLY=False
 RERUN_ALL_CHUNKS=False
 REPO_ROOT="."
 echo "Repository root: $REPO_ROOT"
 
 SELECTED_FUNCS_ROOT="${ST_OUTPUT_ROOT_DIR}/selected_functions/"
-SELECTED_FUNCS="${SELECTED_FUNCS_ROOT}/deduped/"
+SELECTED_FUNCS="/checkpoint/broz/data/2021-04-19_selected_sa_java_functions_for_tests_deduped"
 TESTS_PATHS="${ST_OUTPUT_ROOT_DIR}/tests/"
 TRANSLATIONS_AND_RESULTS_PATH="${ST_OUTPUT_ROOT_DIR}/results/"
 TESTS_RESULTS="${TRANSLATIONS_AND_RESULTS_PATH}test_results/"

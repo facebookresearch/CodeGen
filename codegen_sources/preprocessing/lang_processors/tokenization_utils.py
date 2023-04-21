@@ -5,31 +5,36 @@
 # LICENSE file in the root directory of this source tree.
 #
 import re
+import typing as tp
+
 from sacrebleu import tokenize_v14_international
 
-# IMPORTED
-NEWLINE_TOKEN = "NEWLINE_TOKEN"
-
 
 # IMPORTED
-class ind_iter(object):
-    def __init__(self, len):
+class ind_iter:
+    def __init__(self, length: int) -> None:
         self.i = 0
-        self.len = len
+        self.len = length
 
-    def next(self):
+    def next(self) -> None:
         self.i += 1
         if self.i > (self.len - 1):
             raise StopIteration
 
-    def prev(self):
+    def prev(self) -> None:
         self.i -= 1
         if self.i < 0:
             raise StopIteration
 
 
 # IMPORTED
-def process_string(tok, char2tok, tok2char, is_comment, do_whole_processing=True):
+def process_string(
+    tok: str,
+    char2tok: tp.Dict[str, str],
+    tok2char: tp.Dict[str, str],
+    is_comment: bool,
+    do_whole_processing: bool = True,
+) -> str:
     if not (do_whole_processing or is_comment):
         return tok.replace("\n", "\\n").replace("\r", "")
 
@@ -69,28 +74,28 @@ def process_string(tok, char2tok, tok2char, is_comment, do_whole_processing=True
     return tok
 
 
-def tokenize_string(s: str):
+def tokenize_string(s: str) -> tp.List[str]:
     return process_string(
         s, char2tok=dict(), tok2char=dict(), is_comment=False, do_whole_processing=True
     ).split(" ")
 
 
-def detokenize_string(s):
-    assert isinstance(s, str) or isinstance(s, list)
+def detokenize_string(s: tp.Union[str, tp.List[str]]) -> str:
+    assert isinstance(s, (str, list))
     if isinstance(s, list):
         s = " ".join(s)
     return s.replace(" ", "").replace("▁", " ")
 
 
 # IMPORTED
-def replace_tokens(tok, dictionary):
+def replace_tokens(tok: str, dictionary: tp.Dict[str, str]) -> str:
     for char, special_token in dictionary.items():
         tok = tok.replace(char, special_token)
     return tok
 
 
 # IMPORTED
-def replace_general_string_tok(tok):
+def replace_general_string_tok(tok: str) -> str:
     return (
         tok.replace(" ", " ▁ ")
         .replace("\n", " STRNEWLINE ")
@@ -99,7 +104,7 @@ def replace_general_string_tok(tok):
 
 
 # IMPORTED
-def indent_lines(lines):
+def indent_lines(lines: tp.List[str]) -> str:
     prefix = ""
     for i, line in enumerate(lines):
         line = line.strip()

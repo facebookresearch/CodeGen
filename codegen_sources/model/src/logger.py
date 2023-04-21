@@ -11,7 +11,7 @@ from datetime import timedelta
 
 
 class LogFormatter:
-    def __init__(self):
+    def __init__(self) -> None:
         self.start_time = time.time()
 
     def format(self, record):

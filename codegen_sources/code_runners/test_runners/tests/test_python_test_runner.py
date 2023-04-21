@@ -1,20 +1,11 @@
-# Copyright (c) 2019-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
 from pathlib import Path
-
 import os
 
-from codegen_sources.test_generation.test_runners.python_test_runner import (
-    PythonTestRunner,
-)
-from codegen_sources.model.src.utils import TREE_SITTER_ROOT
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.code_runners.test_runners import PythonEvosuiteTestRunner
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 
-python_processor = LangProcessor.processors["python"](root_folder=TREE_SITTER_ROOT)
+
+python_processor = LangProcessor.processors["python"]()
 
 
 TEST_SIGMOID = """import numpy as np
@@ -50,7 +41,7 @@ if __name__ == '__main__':
 
 
 def test_runner_on_sigmoid_math_fails():
-    python_runner = PythonTestRunner()
+    python_runner = PythonEvosuiteTestRunner()
     sigmoid = """def sigmoid ( input ) :
     return 1.0 / ( 1.0 + ( math.exp ( - input ) ) )"""
     sigmoid = " ".join(python_processor.tokenize_code(sigmoid))
@@ -61,7 +52,7 @@ def test_runner_on_sigmoid_math_fails():
 
 
 def test_runner_on_sigmoid_np_success():
-    python_runner = PythonTestRunner()
+    python_runner = PythonEvosuiteTestRunner()
     sigmoid = """def sigmoid ( input ) :
     return 1.0 / ( 1.0 + ( np.exp ( - input ) ) )"""
     sigmoid = " ".join(python_processor.tokenize_code(sigmoid))
@@ -72,7 +63,7 @@ def test_runner_on_sigmoid_np_success():
 
 
 def test_runner_on_sigmoid_np_timeout():
-    python_runner = PythonTestRunner(timeout=1)
+    python_runner = PythonEvosuiteTestRunner(timeout=1)
     sigmoid = """def sigmoid ( input ) :
     import time
     time.sleep(10)
@@ -88,7 +79,7 @@ def test_firejail_keeps_from_writing():
     if os.environ.get("CI", False):
         return
 
-    python_runner = PythonTestRunner(timeout=20)
+    python_runner = PythonEvosuiteTestRunner(timeout=20)
     test_out_path = Path(__file__).parent.joinpath(
         "test_output_should_not_be_written.out"
     )
@@ -108,8 +99,8 @@ def test_firejail_keeps_from_writing():
 
 
 def test_failures():
-    python_runner = PythonTestRunner()
-    test = """import numpy as np 
+    python_runner = PythonEvosuiteTestRunner()
+    test = """import numpy as np
 import math
 from math import *
 import collections
@@ -133,21 +124,21 @@ class CLASS_1143a612514aceab440e7ae2afc4dcdddb4332091f8c971668711956db699122(uni
       intArray0 = [0] * 8;
       int0 = f_filled(intArray0, 9185)
       assert (-1) ==  int0
-  
+
 
   def test1(self):
       intArray0 = [0] * 8;
       intArray0[0] = 45539;
       int0 = f_filled(intArray0, 0)
       assert 1 ==  int0
-  
+
 
   def test2(self):
       intArray0 = [0] * 1;
       intArray0[0] = 1;
       int0 = f_filled(intArray0, 1)
       assert 0 ==  int0
-  
+
 
 
 if __name__ == '__main__':

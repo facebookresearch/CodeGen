@@ -5,33 +5,40 @@
 # LICENSE file in the root directory of this source tree.
 #
 import subprocess
-
 import json
+import typing as tp
 from concurrent.futures import ProcessPoolExecutor
 import sys
-
 import os
+from logging import getLogger
+from pathlib import Path
 
+from codegen_sources import code_runners
+from codegen_sources.code_runners import test_runners
 from ..utils import (
     REPO_ROOT,
-    limit_virtual_memory,
-    MAX_VIRTUAL_MEMORY,
     read_file_lines,
     get_java_bin_path,
+    TOK_AVOID_NEWLINE,
 )
+from ..constants import EXT
+from codegen_sources.code_runners.utils import MAX_VIRTUAL_MEMORY, limit_virtual_memory
+
+COMPILED = "#Compiled"
+COMPILATION = "#Compilation"
+
+FAILED_IR_COMP_ = "failed_ir_comp:"
+
+EVOSUITE = "evosuite"
+
+GFG = "GfG"
+
+CODE_NET = "CodeNet"
 
 sys.path.append(str(REPO_ROOT))
 print("adding to path", str(REPO_ROOT))
-TREE_SITTER_ROOT = REPO_ROOT.joinpath("tree-sitter")
-import codegen_sources.preprocessing.lang_processors.cpp_processor
-import codegen_sources.preprocessing.lang_processors.java_processor
-import codegen_sources.preprocessing.lang_processors.python_processor
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 
-from codegen_sources.test_generation.test_runners.cpp_test_runner import CppTestRunner
-from codegen_sources.test_generation.test_runners.python_test_runner import (
-    PythonTestRunner,
-)
 from codegen_sources.test_generation.evosuite_tests_translators.evosuite_to_python import (
     EvosuiteToPython,
 )
@@ -39,9 +46,20 @@ from codegen_sources.test_generation.evosuite_tests_translators.evosuite_to_cpp 
     EvosuiteToCpp,
 )
 
-EXT = {"python": "py", "java": "java", "cpp": "cpp"}
+EVAL_SCRIPT_FOLDER = {
+    "test": REPO_ROOT.joinpath("data/transcoder_evaluation_gfg"),
+    "valid": REPO_ROOT.joinpath("data/transcoder_evaluation_gfg"),
+}
 
-TOFILL = {"python": "#TOFILL", "java": "//TOFILL", "cpp": "//TOFILL"}
+CODENET_EVAL_FOLDER = REPO_ROOT.joinpath("data/CodeNet_eval_dataset/")
+
+TOFILL = {
+    "python": "#TOFILL",
+    "java": "//TOFILL",
+    "cpp": "//TOFILL",
+    "go": "//TOFILL",
+    "rust": "//TOFILL",
+}
 
 primitive_types = {"short", "int", "long", "float", "double", "boolean", "char"}
 
@@ -51,8 +69,18 @@ EVOSUITE_TESTS_TRANSCODER_PATH = (
     .joinpath("transcoder_test_set.json")
 )
 
+EVALUATORS = {
+    "cpp": test_runners.CppInputOutputEvaluator(),
+    "rust": test_runners.RustInputOutputEvaluator(),
+    "go": test_runners.GoInputOutputEvaluator(),
+    "java": test_runners.JavaInputOutputEvaluator(),
+}
+logger = getLogger()
 
-def eval_state(proc, proc_name):
+
+def eval_state(proc: tp.Any, proc_name: str) -> tp.Tuple[str, tp.Optional[str]]:
+    results = ""
+    stderr = b""
     try:
         try:
             result, stderr = proc.communicate(timeout=120)
@@ -75,7 +103,61 @@ def eval_state(proc, proc_name):
     except KeyboardInterrupt:
         raise
     except:
-        return "error", stderr.decode("utf-8", errors="replace")
+        if COMPILATION not in results or COMPILED in results:
+            return "error", stderr.decode("utf-8", errors="replace")
+        else:
+            return "compilation", stderr.decode("utf-8", errors="replace")
+
+
+def run_rust_program(
+    script_path: str, i: int
+) -> tp.Tuple[tp.Tuple[str, tp.Optional[str]], int]:
+    code_path = Path(script_path)
+    bin_path = str(code_path.with_suffix("")) + "_go"
+    try:
+        code_runners.compile_rust(
+            code_path, compilation_timeout=30, output_path=Path(bin_path),
+        )
+    except code_runners.CompilationError as e:
+        return ("compilation", str(e)), i
+    except code_runners.Timeout:
+        return ("compilation", "timeout"), i
+    test_cmd = f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; {bin_path}"
+    proc = subprocess.Popen(
+        test_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True,
+        executable="/bin/bash",
+    )
+    res = eval_state(proc, f"{bin_path}")
+    return res, i
+
+
+def run_go_program(script_path, i):
+    code_path = Path(script_path)
+    bin_path = str(code_path.with_suffix("")) + "_go"
+    try:
+        code_runners.compile_go(
+            code_path,
+            compilation_timeout=30,
+            output_path=Path(bin_path),
+            run_go_imports=True,
+        )
+    except code_runners.CompilationError as e:
+        return ("compilation", str(e)), i
+    except code_runners.Timeout:
+        return ("compilation", "timeout"), i
+    test_cmd = f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; {bin_path}"
+    proc = subprocess.Popen(
+        test_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True,
+        executable="/bin/bash",
+    )
+    res = eval_state(proc, f"{bin_path}")
+    return res, i
 
 
 def run_python_program(script_path, i):
@@ -94,7 +176,7 @@ def run_java_program(script_path, i):
     folder = os.path.dirname(script_path)
     name = os.path.basename(script_path).split(".")[0]
     proc = subprocess.Popen(
-        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} &&  {os.path.join(get_java_bin_path(), 'javac')} {name}.java && {os.path.join(get_java_bin_path(), 'java')} {name}",
+        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} &&  echo '{COMPILATION}'; {os.path.join(get_java_bin_path(), 'javac')} {name}.java && echo '{COMPILED}' && {os.path.join(get_java_bin_path(), 'java')} {name}",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=True,
@@ -108,7 +190,7 @@ def run_cpp_program(script_path, i):
     folder = os.path.dirname(script_path)
     name = os.path.basename(script_path).split(".")[0]
     proc = subprocess.Popen(
-        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} && g++ {name}.cpp -o {name}_cpp && ./{name}_cpp",
+        f"{limit_virtual_memory(MAX_VIRTUAL_MEMORY)}; cd {folder} && echo '{COMPILATION}'; g++ {name}.cpp -o {name}_cpp && echo '{COMPILED}' && ./{name}_cpp",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=True,
@@ -218,16 +300,77 @@ def convert_filled_arguments(script_model, f, lang, lang_processor, f_name=None)
     )
 
 
+def submit_codenet_functions(functions_list, id, lang, start_lang, data_folder):
+    runner = EVALUATORS[lang]
+    id = id.rstrip()
+
+    results_list = []
+    problem_id = id.split("_")[0]
+
+    inputs_path = data_folder.joinpath(
+        f"{'-'.join(sorted([start_lang, lang]))}_{lang}", "inputs", f"{problem_id}.in"
+    )
+    if not inputs_path.exists():
+        # print(f"{inputs_path} not found")
+        return [return_script_not_found()], id
+
+    try:
+        input_outputs = eval(open(inputs_path).read())
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        logger.warning(f"WARN: {type(e)} {e}: could not parse file {inputs_path}")
+        return [return_script_not_found()], id
+
+    full_solution = open(
+        data_folder.joinpath("full_solutions", lang, f"{problem_id}.{lang}")
+    ).read()
+    ref_solution = (
+        open(data_folder.joinpath("reference_functions", lang, f"{id}.{lang}"))
+        .read()
+        .strip()
+    )
+    if functions_list[0].startswith(FAILED_IR_COMP_):
+        return [("Failed IR computation", None)], id
+
+    if ref_solution not in full_solution:
+
+        return (
+            [
+                (
+                    "Could not replace",
+                    f"could not find: {ref_solution}\nin \n{full_solution}",
+                )
+            ],
+            id,
+        )
+    inputs = input_outputs[::2]
+    outputs = input_outputs[1::2]
+    for try_id, f_fill in enumerate(functions_list):
+        replaced_code = full_solution.replace(ref_solution, f_fill)
+        assert replaced_code != ref_solution
+        result = runner.check_outputs(replaced_code, inputs, outputs)
+
+        results_list.append(
+            ((result[0], None) if ":" not in result[0] else result[0].split(":", 1))
+        )
+        if result[0] == "success":
+            return results_list, id
+    return results_list, id
+
+
 def submit_evosuite_functions(
-    functions_list, id, lang, test_dictionary, roberta_mode=False
+    functions_list, id, lang, test_dictionary,
 ):
     assert lang in {"cpp", "python"}, f"{lang} is not supported for evosuite tests"
     if lang == "cpp":
-        test_runner = CppTestRunner(timeout=30, compilation_timeout=30)
+        test_runner = test_runners.CppEvosuiteTestRunner(
+            timeout=30, compilation_timeout=30
+        )
     else:
         assert lang == "python"
-        test_runner = PythonTestRunner(timeout=30)
-    lang_processor = LangProcessor.processors[lang](root_folder=TREE_SITTER_ROOT)
+        test_runner = test_runners.PythonEvosuiteTestRunner(timeout=30)
+    lang_processor = LangProcessor.processors[lang]()
     id = id.rstrip()
     if id not in test_dictionary or test_dictionary[id] == "missing":
         return [return_script_not_found()], id
@@ -235,11 +378,6 @@ def submit_evosuite_functions(
     results_list = []
     for try_id, f_fill in enumerate(functions_list):
         f = f_fill.rstrip()
-        f = (
-            lang_processor.detokenize_code(f)
-            if not roberta_mode
-            else f.replace("#NEWLINE", "\n")
-        )
         result = test_runner.get_tests_results(f, test)
         results_list.append((result[0], None))
         if result[0] == "success":
@@ -247,80 +385,88 @@ def submit_evosuite_functions(
     return results_list, id
 
 
+def detokenize_before_running(f, lang_processor, tokenization_mode):
+    if tokenization_mode == "fastbpe":
+        f = lang_processor.detokenize_code(f)
+    else:
+        f = f.replace(TOK_AVOID_NEWLINE, "\n")
+    return f
+
+
 def submit_functions(
-    functions_list,
-    id,
-    ref,
-    lang,
-    outfolder,
-    script_folder,
-    retry_mismatching_types,
-    roberta_mode=False,
+    functions_list, id, ref, lang, outfolder, script_folder, retry_mismatching_types,
 ):
-    lang_processor = LangProcessor.processors[lang](root_folder=TREE_SITTER_ROOT)
+    lang_processor = LangProcessor.processors[lang]()
     results_list = []
     i = id.rstrip()
     for try_id, f_fill in enumerate(functions_list):
-        f = f_fill.rstrip()
-        script_model_path = os.path.join(script_folder, f"{lang}/{i}.{EXT[lang]}")
-        if os.path.exists(script_model_path):
-            script_model = open(script_model_path, "r", encoding="utf-8").read()
-            try:
-                f_name = lang_processor.get_function_name(f)
-                f = f.replace(f_name, "f_filled")
-            except:
-                results_list.append(("error", "Could not replace function name"))
-            if f_fill == ref:
+        f = f_fill.strip()
+        script_model_path = os.path.join(script_folder, f"{lang}/{i}{EXT[lang]}")
+        if not os.path.exists(script_model_path):
+            return [return_script_not_found()], i
+        script_model = open(script_model_path, "r", encoding="utf-8").read()
+
+        if f.startswith(FAILED_IR_COMP_):
+            return [("Failed IR computation", None)], i
+
+        try:
+            f_name = lang_processor.get_function_name(lang_processor.tokenize_code(f))
+            f = f.replace(f_name, "f_filled")
+        except KeyboardInterrupt:
+            raise
+        except:
+            results_list.append(("error", "Could not replace function name"))
+            continue
+        try:
+            if f_fill.strip() == ref.strip() or lang_processor.tokenize_code(
+                f_fill
+            ) == lang_processor.tokenize_code(ref):
                 results_list.append(("success", "identical to gold"))
                 return results_list, i
-            f = (
-                lang_processor.detokenize_code(f)
-                if not roberta_mode
-                else f.replace("#NEWLINE", "\n")
-            )
-            script = script_model.replace(TOFILL[lang], f)
-            if lang == "python":
-                script = f"import numpy as np \nimport math\nfrom math import *\nimport collections\nfrom collections import *\nimport heapq\nimport itertools\nimport random\nimport sys\n\n{script}"
-            script_path = f"{outfolder}/{i}.{EXT[lang]}"
-            open(script_path, "w", encoding="utf-8").write(script)
-            run_pg = globals()[f"run_{lang}_program"]
-            result, _ = run_pg(script_path, i)
-            if result[0] == "success":
-                results_list.append(result)
-                return results_list, i
-            elif retry_mismatching_types and lang in {"cpp", "java"}:
-                try:
-                    script_transform_args = convert_filled_arguments(
-                        script_model, f_fill, lang, lang_processor, f_name=f_name
-                    )
-                except KeyboardInterrupt:
-                    raise
-                except:
-                    script_transform_args = None
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            logger.info(f"Error {type(e)}: {e} when tokenizing reference {ref}")
 
-                if script_transform_args is not None:
-                    open(script_path, "w", encoding="utf-8").write(
-                        script_transform_args
-                    )
-                    run_pg = globals()[f"run_{lang}_program"]
-                    result2, _ = run_pg(script_path, i)
-                    if result2[0] == "success":
-                        results_list.append(result2)
-                        return results_list, i
-                    else:
-                        result = (
-                            result2[0],
-                            "".join(
-                                [
-                                    result[1] if result[1] else "",
-                                    f"|| second run handling types mismatch: ## function ## {script_transform_args} ## output ## {result2[1]}",
-                                ]
-                            ),
-                        )
-
+        script = script_model.replace(TOFILL[lang], f)
+        if lang == "python":
+            script = f"import numpy as np \nimport math\nfrom math import *\nimport collections\nfrom collections import *\nimport heapq\nimport itertools\nimport random\nimport sys\n\n{script}"
+        script_path = f"{outfolder}/{i}{EXT[lang]}"
+        open(script_path, "w", encoding="utf-8").write(script)
+        run_pg = globals()[f"run_{lang}_program"]
+        result, _ = run_pg(script_path, i)
+        if result[0] == "success":
             results_list.append(result)
-        else:
-            return [return_script_not_found()], i
+            return results_list, i
+        elif retry_mismatching_types and lang in {"cpp", "java"}:
+            try:
+                script_transform_args = convert_filled_arguments(
+                    script_model, f_fill, lang, lang_processor, f_name=f_name
+                )
+            except KeyboardInterrupt:
+                raise
+            except:
+                script_transform_args = None
+
+            if script_transform_args is not None:
+                open(script_path, "w", encoding="utf-8").write(script_transform_args)
+                run_pg = globals()[f"run_{lang}_program"]
+                result2, _ = run_pg(script_path, i)
+                if result2[0] == "success":
+                    results_list.append(result2)
+                    return results_list, i
+                else:
+                    result = (
+                        result2[0],
+                        "".join(
+                            [
+                                result[1] if result[1] else "",
+                                f"|| second run handling types mismatch: ## function ## {script_transform_args} ## output ## {result2[1]}",
+                            ]
+                        ),
+                    )
+
+        results_list.append(result)
     return results_list, i
 
 
@@ -328,46 +474,68 @@ def eval_function_output(
     ref_path,
     hyp_paths,
     id_path,
+    lang1,
     lang2,
     outfolder,
     script_folder,
     retry_mismatching_types,
-    roberta_mode,
-    evosuite_functions=False,
+    tokenization_mode,
+    tests_type,
     evosuite_tests=None,
 ):
+    assert tests_type in {
+        EVOSUITE,
+        GFG,
+        CODE_NET,
+    }, f"Test type {tests_type} not recognized"
     functions = list(zip(*[read_file_lines(path) for path in hyp_paths]))
     ids = read_file_lines(id_path)
+    ids_to_num = {id_str.strip(): i for i, id_str in enumerate(ids)}
     refs = read_file_lines(ref_path)
     assert len(functions) == len(ids), f"{len(functions), len(ids)}"
     assert len(functions) == len(refs), f"{len(functions), len(refs)}"
     lang = lang2.split("_")[0]
     jobs = []
+    lang_processor = LangProcessor.processors[lang]()
     executor = ProcessPoolExecutor()
-    for f, i, r in zip(functions, ids, refs):
-        if evosuite_functions:
+    for hyp_list, i, r in zip(functions, ids, refs):
+        r = detokenize_before_running(
+            r, lang_processor=lang_processor, tokenization_mode=tokenization_mode
+        )
+        hyp_list = [
+            detokenize_before_running(
+                f, lang_processor=lang_processor, tokenization_mode=tokenization_mode
+            )
+            for f in hyp_list
+        ]
+        if tests_type == EVOSUITE:
             jobs.append(
                 executor.submit(
-                    submit_evosuite_functions,
-                    f,
-                    i,
-                    lang,
-                    evosuite_tests[lang],
-                    roberta_mode,
+                    submit_evosuite_functions, hyp_list, i, lang, evosuite_tests[lang],
                 )
             )
-        else:
+        elif tests_type == GFG:
             jobs.append(
                 executor.submit(
                     submit_functions,
-                    f,
+                    hyp_list,
                     i,
                     r,
                     lang,
                     outfolder,
                     script_folder,
                     retry_mismatching_types,
-                    roberta_mode,
+                )
+            )
+        elif tests_type == CODE_NET:
+            jobs.append(
+                executor.submit(
+                    submit_codenet_functions,
+                    hyp_list,
+                    i,
+                    lang,
+                    lang1.split("_")[0],
+                    script_folder,
                 )
             )
 
@@ -382,6 +550,7 @@ def eval_function_output(
     results = ["" for _ in range(len(ids))]
     for job in jobs:
         results_list, i = job.result()
+        # print(results_list)
         nb_success = sum([r[0] == "success" for r in results_list])
         nb_identical = sum(
             [r[0] == "success" and r[1] == "identical to gold" for r in results_list]
@@ -395,13 +564,13 @@ def eval_function_output(
             results_stats[results_list[0][0]] = (
                 results_stats.get(results_list[0][0], 0) + 1
             )
-        results[ids.index(i + "\n")] = []
+        results[ids_to_num[i.strip()]] = []
         for result, stderr in results_list:
             if stderr is not None:
                 stderr = stderr.replace("\n", " ")
             else:
                 stderr = "None"
-            results[ids.index(i + "\n")].append(f"{result} : {stderr}")
+            results[ids_to_num[i.strip()]].append(f"{result} : {stderr}")
 
     results_stats["total"] = len(functions)
     results_stats["total_evaluated"] = (
@@ -459,3 +628,13 @@ def transform_to_java_object_type(t):
 
 def get_return_type(tokenized_java):
     return tokenized_java.split("(")[0].split()[-2]
+
+
+def init_eval_scripts_folder(data_set, lang1, lang2, params):
+    params.eval_scripts_folders[(lang1, lang2, data_set)] = os.path.join(
+        params.eval_scripts_root, "{0}-{1}.{2}".format(lang1, lang2, data_set),
+    )
+    subprocess.Popen(
+        "mkdir -p %s" % params.eval_scripts_folders[(lang1, lang2, data_set)],
+        shell=True,
+    ).wait()

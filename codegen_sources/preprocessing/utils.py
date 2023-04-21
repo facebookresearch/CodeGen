@@ -8,13 +8,14 @@ import argparse
 import json
 import random
 import subprocess
-import typing as tp
 from pathlib import Path
-from typing import List
 from logging import getLogger
 
 from codegen_sources.model.preprocess import XLM_preprocess
+import typing as tp
 
+
+PathLike = tp.Union[str, Path]
 
 REPO_ROOT = str(Path(__file__).parents[2])
 
@@ -36,14 +37,14 @@ def bool_flag(s):
         raise argparse.ArgumentTypeError("Invalid value for a boolean flag!")
 
 
-def is_valid_file(file):
-    if file is None:
+def is_valid_file(filepath: tp.Optional[PathLike]) -> bool:
+    if filepath is None:
         return False
-    if isinstance(file, str):
-        file = Path(file)
+    if isinstance(filepath, str):
+        filepath = Path(filepath)
     else:
-        assert isinstance(file, Path)
-    return file.is_file() and file.stat().st_size > 0
+        assert isinstance(filepath, Path)
+    return filepath.is_file() and filepath.stat().st_size > 0
 
 
 def get_nlines(file_path):
@@ -52,13 +53,16 @@ def get_nlines(file_path):
         f"wc -l {file_path}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     assert process.returncode == 0
-    return int(process.stdout.decode().split(" ")[0])
+    out = process.stdout.decode()
+    return int(out.lstrip().split(" ")[0])
 
 
 def check_same_number_of_lines(file_path1, file_path2):
     nlines1 = get_nlines(file_path1)
     nlines2 = get_nlines(file_path2)
-    assert nlines1 == nlines2
+    assert (
+        nlines1 == nlines2
+    ), f"{file_path1} contains {nlines1} examples vs {file_path2}: {nlines2} examples"
 
 
 def head(file_path, n):
@@ -68,7 +72,7 @@ def head(file_path, n):
     return h
 
 
-def get_subset_file(file_paths: List[Path], subset_size_gb: int, output_path: Path):
+def get_subset_file(file_paths: tp.List[Path], subset_size_gb: int, output_path: Path):
     """
     Return one file containing a subset of files file_paths.
     The subset is of size subset_size_gb.
@@ -91,7 +95,8 @@ def get_subset_file(file_paths: List[Path], subset_size_gb: int, output_path: Pa
     logger.info(
         f"Subset of {[f.name for f in file_paths]} created at: {output_path.name}. Size=({output_path.stat().st_size / 1024 ** 3:.2f}GB)."
     )
-    return f"{output_path}"
+    shuf_file(output_path)
+    return f"{output_path}.shuf"
 
 
 def truncate_files(file_paths):
@@ -126,7 +131,7 @@ def shuf_file(file_path):
     )
     assert (
         process.returncode == 0
-    ), f"failed to shuffle {file_path}\n Error {process.stderr}"
+    ), f"failed to shuffle {file_path}\n Error {process.stderr.decode()}"
 
 
 def get_all_pairs(items):
@@ -137,21 +142,24 @@ def get_all_pairs(items):
     ]
 
 
-def shuf_parallel_files(file_paths):
-    lines_order = []
+def shuf_parallel_files(file_paths: tp.List[PathLike]) -> None:
+    lines_order: tp.List[int] = []
     for input_path in file_paths:
-        with open(input_path, "r") as f:
+        input_path = Path(input_path)
+        with input_path.open("r", encoding="utf8") as f:
             lines = f.readlines()
         if not lines_order:
             lines_order = list(range(len(lines)))
             random.shuffle(lines_order)
             random.shuffle(lines_order)
 
-        assert len(lines_order) == len(
-            lines
-        ), f"files with different number of lines in {file_paths}"
+        if len(lines_order) != len(lines):
+            raise RuntimeError(
+                f"files with different number of lines in {file_paths} "
+                f"({len(lines_order)} and {len(lines)})"
+            )
         reordered = [lines[i] for i in lines_order]
-        with open(f"{input_path}.shuf", "w") as f:
+        with open(f"{input_path}.shuf", "w", encoding="utf8") as f:
             f.writelines(reordered)
 
 
@@ -195,6 +203,7 @@ def matched(str):
     count = 0
     is_in_string = False
     string_char = ""
+    previous_char = ""
     for i, c in enumerate(str):
         if is_in_string:
             if c == string_char and (

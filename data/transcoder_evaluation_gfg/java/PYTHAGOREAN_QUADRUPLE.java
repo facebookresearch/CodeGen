@@ -33,7 +33,7 @@ public static void main(String args[]) {
     param0.add(96);
     param0.add(70);
     List<Integer> param1 = new ArrayList<>();
-    param1.add(1);
+    param1.add(2);
     param1.add(2);
     param1.add(0);
     param1.add(-1);
@@ -44,7 +44,7 @@ public static void main(String args[]) {
     param1.add(65);
     param1.add(33);
     List<Integer> param2 = new ArrayList<>();
-    param2.add(1);
+    param2.add(2);
     param2.add(5);
     param2.add(0);
     param2.add(-1);

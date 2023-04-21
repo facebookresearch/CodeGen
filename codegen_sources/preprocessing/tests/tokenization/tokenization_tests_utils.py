@@ -6,6 +6,7 @@
 #
 
 import difflib
+import typing as tp
 
 
 def tokenizer_test(test_examples, processor, keep_comments):
@@ -69,7 +70,9 @@ def tokenize_twice(test_examples, processor, keep_comments=False):
             )
 
 
-def compare_funcs(actual, expected):
+def compare_funcs(
+    actual, expected, normalization: tp.Callable = lambda x: x,
+):
     d = difflib.Differ()
     if expected != actual:
         print("Expected:")
@@ -78,7 +81,7 @@ def compare_funcs(actual, expected):
         print("Got:")
         print(actual)
         print("#" * 50)
-        diff = d.compare(expected, actual)
+        diff = d.compare(normalization(expected), normalization(actual))
         for line in diff:
             print(line)
         raise Exception(

@@ -17,7 +17,6 @@ import sys
 from codegen_sources.model.src.data.dictionary import Dictionary
 from codegen_sources.model.src.logger import create_logger
 
-
 logger = create_logger(None, 0)
 
 
@@ -54,7 +53,6 @@ def XLM_preprocess(voc_path, txt_path, bin_path):
 
 
 if __name__ == "__main__":
-
     voc_path_arg = sys.argv[1]
     txt_path_arg = sys.argv[2]
     bin_path_arg = sys.argv[2] + ".pth"

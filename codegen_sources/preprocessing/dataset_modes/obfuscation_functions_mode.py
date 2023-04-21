@@ -9,18 +9,18 @@ from itertools import chain
 from logging import getLogger
 
 import submitit
+import typing as tp
 from codegen_sources.preprocessing.bpe_modes.bpe_mode import TMP_EXT
 from codegen_sources.preprocessing.dataset_modes.dataset_mode import (
     DATASET_SPLITS,
     DatasetMode,
 )
-from codegen_sources.preprocessing.lang_processors.lang_processor import LangProcessor
+from codegen_sources.preprocessing.lang_processors import LangProcessor
 from codegen_sources.preprocessing.obfuscation.utils_deobfuscation import (
     REPLACE_DICT,
     cleanup_obfuscated_function,
 )
 from codegen_sources.preprocessing.timeout import timeout
-from submitit import Executor, LocalExecutor
 
 OUTLIER_INDICES_THRESHOLDS = {"VAR_": 200, "FUNC_": 200, "CLASS_": 100}
 
@@ -38,9 +38,10 @@ class ObfuscationFunctionsMode(DatasetMode):
         folder,
         languages,
         bpe,
-        processed_lines: set = None,
+        processed_lines: tp.Optional[tp.Set] = None,
         nb_train_split: int = 8,
         keep_comments: bool = False,
+        repo_split: bool = True,
     ):
         super().__init__(
             suffixes=FUNC_OBFUSCATION_SUFFIXES,
@@ -51,23 +52,24 @@ class ObfuscationFunctionsMode(DatasetMode):
             processed_lines=processed_lines,
             nb_train_split=nb_train_split,
             keep_comments=keep_comments,
+            repo_split=repo_split,
         )
 
-    def checkpoint(
-        self, input_path: str, process_strings: bool
-    ) -> submitit.helpers.DelayedSubmission:
-        return submitit.helpers.DelayedSubmission(
-            self.__class__(
-                self.folder, self.languages, self.bpe, self.processed_lines,
-            ),
-            input_path,
-            process_strings,
-        )
+    # broken since not checkpointable
+    # def checkpoint(
+    #     self, input_path: str, process_strings: bool
+    # ) -> submitit.helpers.DelayedSubmission:
+    #     return submitit.helpers.DelayedSubmission(
+    #         self.__class__(
+    #             self.folder, self.languages, self.bpe, self.processed_lines,
+    #         ),
+    #         input_path,
+    #         process_strings,
+    #     )
 
-    @timeout(60)
     def extract_data_for_line(
         self,
-        line_id: int,
+        line_id: str,
         json_line: dict,
         process_strings: bool,
         lang_processor: LangProcessor,
@@ -125,7 +127,7 @@ class ObfuscationFunctionsMode(DatasetMode):
             {"obfuscated_func": obfuscated_functions, "dictionary_func": func_dicos},
         )
 
-    def filter(self, tokenized_data):
+    def post_tok_filter(self, tokenized_data):
         assert all(s in tokenized_data for s in self.suffixes)
         assert len(tokenized_data["dictionary_func"]) == len(
             tokenized_data["obfuscated_func"]
@@ -136,14 +138,20 @@ class ObfuscationFunctionsMode(DatasetMode):
                     return True
         return False
 
-    def _learn_bpe(self, ncodes: int, executor: Executor = None):
+    def _learn_bpe(
+        self, ncodes: int, executor: tp.Optional["ExecutorLike"] = None
+    ) -> None:
         raise Exception(
             "BPE codes should not be learnt from obfuscated data. Learn them on monolingual data."
             "Please provide bpe codes or learn them."
             "To do so, please run pipepline with monolingual mode until BPE learning."
         )
 
-    def apply_bpe(self, executor: Executor = None, local_parallelism: int = None):
+    def apply_bpe(
+        self,
+        executor: tp.Optional["ExecutorLike"] = None,
+        local_parallelism: tp.Optional[int] = None,
+    ) -> None:
         """
         Overwrite the method as in the obfuscation mode, need to restore the BPE.
         """
@@ -151,7 +159,7 @@ class ObfuscationFunctionsMode(DatasetMode):
         logger.info("")
         logger.info("========== Apply BPE ===========")
         if executor is None:
-            executor = LocalExecutor(folder=self.folder.joinpath("log"))
+            executor = submitit.LocalExecutor(folder=self.folder.joinpath("log"))
         # apply BPE with tmp suffix
         _bpe_ext = self.bpe.ext
         self.bpe.ext += TMP_EXT
@@ -179,7 +187,7 @@ class ObfuscationFunctionsMode(DatasetMode):
             assert f.with_suffix("").is_file()
             f.unlink()
 
-    def _get_vocab(self, executor: Executor = None):
+    def _get_vocab(self, executor: tp.Optional["ExecutorLike"] = None) -> None:
         raise Exception(
             "Vocab should not be learnt from obfuscated data. Learn it on monolingual data."
             "Please provide vocab or learn them."

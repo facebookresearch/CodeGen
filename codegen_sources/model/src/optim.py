@@ -20,7 +20,9 @@ class Adam(optim.Optimizer):
     It was important to add `.item()` in `state['step'].item()`.
     """
 
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
+    def __init__(
+        self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0
+    ) -> None:
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -29,6 +31,8 @@ class Adam(optim.Optimizer):
             raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+        if not 0.0 <= weight_decay:
+            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(params, defaults)
 
@@ -71,8 +75,8 @@ class Adam(optim.Optimizer):
                 #     grad.add_(group['weight_decay'], p.data)
 
                 # Decay the first and second moment running average coefficient
-                exp_avg.mul_(beta1).add_(1 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
                 denom = exp_avg_sq.sqrt().add_(group["eps"])
                 # denom = exp_avg_sq.sqrt().clamp_(min=group['eps'])
 
@@ -81,9 +85,9 @@ class Adam(optim.Optimizer):
                 step_size = group["lr"] * math.sqrt(bias_correction2) / bias_correction1
 
                 if group["weight_decay"] != 0:
-                    p.data.add_(-group["weight_decay"] * group["lr"], p.data)
+                    p.data.add_(p.data, alpha=-group["weight_decay"] * group["lr"])
 
-                p.data.addcdiv_(-step_size, exp_avg, denom)
+                p.data.addcdiv_(exp_avg, denom, value=-step_size)
 
         return loss
 
@@ -259,7 +263,7 @@ def get_optimizer(parameters, s):
         for x in s[s.find(",") + 1 :].split(","):
             split = x.split("=")
             assert len(split) == 2
-            assert re.match("^[+-]?(\d+(\.\d*)?|\.\d+)$", split[1]) is not None
+            assert re.match(r"^[+-]?(\d+(\.\d*)?|\.\d+)$", split[1]) is not None
             optim_params[split[0]] = float(split[1])
     else:
         method = s
