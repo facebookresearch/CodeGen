@@ -15,16 +15,12 @@ import pytest
 
 
 from codegen_sources.preprocessing.preprocess import preprocess
+from codegen_sources.model.src.utils import AttrDict
+
 
 input_path = Path(__file__).parents[4].joinpath("data/test_dataset")
 bpe_path = Path(__file__).parents[4].joinpath("data/bpe/cpp-java-python")
 logger = logging.getLogger(__name__)
-
-
-class AttrDict(dict):
-    def __init__(self, *args, **kwargs) -> None:
-        super(AttrDict, self).__init__(*args, **kwargs)
-        self.__dict__ = self
 
 
 def _deactivate_in_ci() -> None:
@@ -50,6 +46,10 @@ DEFAULT_PARAMETERS = AttrDict(
         "bpe_timeout": 2,
         "train_bpe_timeout": 5,
         "repo_split": True,
+        "fastbpe_code_path": None,
+        "fastbpe_vocab_path": None,
+        "fastbpe_use_vocab": False,
+        "tokenize_line_timeout": 60,
     }
 )
 
