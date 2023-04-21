@@ -22,6 +22,8 @@ input_path = Path(__file__).parents[4].joinpath("data/test_dataset")
 bpe_path = Path(__file__).parents[4].joinpath("data/bpe/cpp-java-python")
 logger = logging.getLogger(__name__)
 
+RELATIVE_TOLERANCE = 0.005
+
 
 def _deactivate_in_ci() -> None:
     """Diminish number of used processors in the CI since it triggers
@@ -55,19 +57,43 @@ DEFAULT_PARAMETERS = AttrDict(
 
 
 @pytest.fixture(autouse=True)
-def setup(tmpdir):
-    if (input_path / "log").is_dir():
-        shutil.rmtree(input_path.joinpath("log"))
+def setup() -> None:
+    subdirs = ["log", "XLM-syml"]
+    for name in subdirs:
+        subpath = input_path / name
+        if subpath.is_dir():
+            try:
+                shutil.rmtree(subpath)
+            except OSError as e:
+                logger.warning(f"Could not delete the folder ({subpath}):\n{e}")
     for f in input_path.glob("*"):
-        if not f.name.endswith(".json.gz"):
-            f.unlink()
+        if not f.name.endswith(".json.gz") and f.name not in subdirs:
+            try:
+                f.unlink()
+            except OSError as e:
+                if not f.name.startswith(".nfs"):
+                    raise e
+                logger.warning(f"Could not delete file:\n{e}")
+
+
+def check_number_lines_is(nb):
+    assert abs(count_bpe_lines() - nb) / nb < RELATIVE_TOLERANCE, count_bpe_lines()
+
+
+def count_bpe_lines():
+    tok_files = list(input_path.glob("*.bpe")) + list(input_path.glob("*.bperob"))
+    count = 0
+    for path in tok_files:
+        with open(path) as f:
+            count += len(f.readlines())
+    return count
 
 
 # Roberta Mode
 def test_obfuscation_roberta_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
-        {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta",}
+        {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta"}
     )
     _deactivate_in_ci()
     preprocess(args)
