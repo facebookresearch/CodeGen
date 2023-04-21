@@ -37,6 +37,7 @@ LTensor = torch.LongTensor
 PathLike = tp.Union[Path, str]
 
 REPO_ROOT = Path(__file__).parents[3].absolute()
+TREE_SITTER_ROOT = REPO_ROOT.joinpath("tree-sitter")
 sys.path.append(str(REPO_ROOT))
 print("adding to path", str(REPO_ROOT))
 # from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
