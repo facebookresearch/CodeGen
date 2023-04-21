@@ -7,7 +7,6 @@
 import os
 import subprocess
 import sys
-import uuid
 from pathlib import Path, PosixPath
 from subprocess import Popen
 
@@ -24,13 +23,13 @@ from ...model.src.utils import (
     limit_virtual_memory,
     MAX_VIRTUAL_MEMORY,
 )
-from ...preprocessing.lang_processors.lang_processor import LangProcessor
+from ...preprocessing.lang_processors.lang_processor import PythonTreeSitterProcessor
 
 sys.path.append(str(Path(__file__).parents[3]))
 print("adding to path", str(Path(__file__).parents[3]))
 
 
-python_processor = LangProcessor.processors["python"](root_folder=TREE_SITTER_ROOT)
+python_processor = PythonTreeSitterProcessor(root_folder=TREE_SITTER_ROOT)
 
 
 class PythonTestRunner(EvosuiteTestRunner):
