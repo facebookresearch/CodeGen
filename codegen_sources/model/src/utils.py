@@ -32,6 +32,7 @@ from .constants import (
 from .data.dictionary import NUM_SPECIAL_TOKENS
 
 TOK_AVOID_NEWLINE = "#NEWLINE"
+MAX_VIRTUAL_MEMORY = 2 * 1024 * 1024 * 1024  # 2 GB
 
 LTensor = torch.LongTensor
 PathLike = tp.Union[Path, str]
