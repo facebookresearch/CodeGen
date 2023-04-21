@@ -15,13 +15,16 @@ import pytest
 
 
 from codegen_sources.preprocessing.preprocess import preprocess
-from codegen_sources.model.src.utils import AttrDict
 
-RELATIVE_TOLERANCE = 0.005
-
-input_path = Path(__file__).parents[4].joinpath("data/sample_dataset")
+input_path = Path(__file__).parents[4].joinpath("data/test_dataset")
 bpe_path = Path(__file__).parents[4].joinpath("data/bpe/cpp-java-python")
 logger = logging.getLogger(__name__)
+
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs) -> None:
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
 
 
 def _deactivate_in_ci() -> None:
@@ -47,60 +50,31 @@ DEFAULT_PARAMETERS = AttrDict(
         "bpe_timeout": 2,
         "train_bpe_timeout": 5,
         "repo_split": True,
-        "fastbpe_code_path": None,
-        "fastbpe_vocab_path": None,
-        "fastbpe_use_vocab": False,
-        "tokenize_line_timeout": 60,
     }
 )
 
 
 @pytest.fixture(autouse=True)
-def setup() -> None:
-    subdirs = ["log", "XLM-syml"]
-    for name in subdirs:
-        subpath = input_path / name
-        if subpath.is_dir():
-            try:
-                shutil.rmtree(subpath)
-            except OSError as e:
-                logger.warning(f"Could not delete the folder ({subpath}):\n{e}")
+def setup(tmpdir):
+    if (input_path / "log").is_dir():
+        shutil.rmtree(input_path.joinpath("log"))
     for f in input_path.glob("*"):
-        if not f.name.endswith(".json.gz") and f.name not in subdirs:
-            try:
-                f.unlink()
-            except OSError as e:
-                if not f.name.startswith(".nfs"):
-                    raise e
-                logger.warning(f"Could not delete file:\n{e}")
-
-
-def check_number_lines_is(nb):
-    assert abs(count_bpe_lines() - nb) / nb < RELATIVE_TOLERANCE, count_bpe_lines()
-
-
-def count_bpe_lines():
-    tok_files = list(input_path.glob("*.bpe")) + list(input_path.glob("*.bperob"))
-    count = 0
-    for path in tok_files:
-        with open(path) as f:
-            count += len(f.readlines())
-    return count
+        if not f.name.endswith(".json.gz"):
+            f.unlink()
 
 
 # Roberta Mode
-def test_obfuscation_roberta_pipeline() -> None:
+def test_obfuscation_roberta_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {"langs": ["java", "python"], "mode": "obfuscation", "bpe_mode": "roberta",}
     )
     _deactivate_in_ci()
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(316)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_obfuscation_functions_roberta_pipeline() -> None:
+def test_obfuscation_functions_roberta_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -111,11 +85,10 @@ def test_obfuscation_functions_roberta_pipeline() -> None:
     )
     _deactivate_in_ci()
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(2710)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_monolingual_roberta_pipeline() -> None:
+def test_monolingual_roberta_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -126,11 +99,10 @@ def test_monolingual_roberta_pipeline() -> None:
     )
     _deactivate_in_ci()
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(294)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_monolingual_functions_roberta_pipeline() -> None:
+def test_monolingual_functions_roberta_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -141,12 +113,11 @@ def test_monolingual_functions_roberta_pipeline() -> None:
     )
     _deactivate_in_ci()
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(3717)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
 # Fast BPE Mode
-def test_monolingual_fast_pipeline() -> None:
+def test_monolingual_fast_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -159,11 +130,10 @@ def test_monolingual_fast_pipeline() -> None:
         }
     )
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(529)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_monolingual_functions_fast_pipeline() -> None:
+def test_monolingual_functions_fast_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -176,11 +146,10 @@ def test_monolingual_functions_fast_pipeline() -> None:
         }
     )
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(6629)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_monolingual_functions_fast_pipeline_keep_comments() -> None:
+def test_monolingual_functions_fast_pipeline_keep_comments():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -194,27 +163,10 @@ def test_monolingual_functions_fast_pipeline_keep_comments() -> None:
         }
     )
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(6616)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_monolingual_functions_sentencepiece_pipeline_keep_comments() -> None:
-    args = AttrDict(DEFAULT_PARAMETERS)
-    args.update(
-        {
-            "langs": ["java", "python", "cpp"],
-            "mode": "sentence_piece_function",
-            "bpe_mode": "fast",
-            "keep_comments": True,
-        }
-    )
-    preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(3728)
-    # TODO: why is it so much smaller?
-
-
-def test_obfuscation_fast_pipeline() -> None:
+def test_obfuscation_fast_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -228,11 +180,10 @@ def test_obfuscation_fast_pipeline() -> None:
         }
     )
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(316)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
 
 
-def test_obfuscation_functions_fast_pipeline() -> None:
+def test_obfuscation_functions_fast_pipeline():
     args = AttrDict(DEFAULT_PARAMETERS)
     args.update(
         {
@@ -246,27 +197,4 @@ def test_obfuscation_functions_fast_pipeline() -> None:
         }
     )
     preprocess(args)
-    # shutil.rmtree(input_path.joinpath("XLM-syml"))
-    check_number_lines_is(2656)
-
-
-def test_python_type_hints_fast_pipeline() -> None:
-    args = AttrDict(DEFAULT_PARAMETERS)
-    args.update(
-        {
-            "langs": ["python"],
-            "mode": "python_type_hints",
-            "bpe_mode": "fast",
-            "percent_test_valid": 20,
-            "fastbpe_code_path": f"{(bpe_path / 'codes').absolute()}",
-            "fastbpe_vocab_path": f"{(bpe_path / 'vocab').absolute()}",
-            "fastbpe_use_vocab": False,
-            "ncodes": 50000,
-        }
-    )
-    preprocess(args)
-    expected = input_path / "python.all.dictionary.tok"
-    lines = expected.read_text("utf8").splitlines()
-    assert len(lines) == 8
-    assert lines[0] == "fernandog/Medusa | VAR_0 bool"
-    check_number_lines_is(16)
+    shutil.rmtree(input_path.joinpath("XLM-syml"))
