@@ -120,6 +120,11 @@ def batch_sentences(sentences, pad_index, eos_index):
     return sent, lengths
 
 
+def limit_virtual_memory(max_virtual_memory):
+    # We do a soft limit in order to be able to change the limit later if needed
+    return f"ulimit -S -v {max_virtual_memory}"
+
+
 class AttrDict(dict):
     def __init__(self, *args: tp.Any, **kwargs: tp.Any) -> None:
         super(AttrDict, self).__init__(*args, **kwargs)

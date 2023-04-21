@@ -5,7 +5,7 @@ import torch
 import fastBPE
 from transformers import RobertaTokenizer
 import codegen_sources
-import codegen_sources.utils.typing as tp
+import typing as tp
 import codegen_sources.preprocessing.lang_processors as langp
 import codegen_sources.preprocessing.lang_processors.utils as lputils
 import codegen_sources.model.src.data.dictionary as dic
@@ -24,6 +24,7 @@ from . import utils
 # bpe -> tokenized -> code
 import sentencepiece as spm  # type: ignore
 
+PathLike = tp.Union[str, Path]
 X = tp.TypeVar("X")
 Y = tp.TypeVar("Y")
 Z = tp.TypeVar("Z")
@@ -229,7 +230,7 @@ class BpeBase(Transform[TokCode, str]):
 
 
 class FastBpe(BpeBase):
-    def __init__(self, code_path: tp.Optional[tp.PathLike] = None) -> None:
+    def __init__(self, code_path: tp.Optional[PathLike] = None) -> None:
         super().__init__()
         if code_path is None:
             code_path = BPE_FOLDER / "codes"
@@ -264,7 +265,7 @@ class StrSplit(Transform[str, TokCode]):
 class SentencePieceTokenizer(Transform[str, str]):
     """Computes tokenization + BPE in one step"""
 
-    def __init__(self, code_path: tp.Optional[tp.PathLike] = None) -> None:
+    def __init__(self, code_path: tp.Optional[PathLike] = None) -> None:
         # delayed init because can be slow/heavy/non-picklable
         if code_path is None:
             code_path = BPE_FOLDER.parent / "sentencepiece/sentencepiece_32k_v2/model"
@@ -345,7 +346,7 @@ class BpeTensorizer(Transform[str, torch.Tensor]):
     """
 
     def __init__(
-        self, vocab_path: tp.Optional[tp.PathLike] = None, no_unk: bool = False
+        self, vocab_path: tp.Optional[PathLike] = None, no_unk: bool = False
     ) -> None:
         # check model preprocess.py
         if vocab_path is None:
@@ -398,7 +399,7 @@ class Tensorizer(Composition[TokCode, torch.Tensor]):
     """
 
     def __init__(
-        self, bpe_folder: tp.Optional[tp.PathLike] = None, no_unk: bool = False
+        self, bpe_folder: tp.Optional[PathLike] = None, no_unk: bool = False
     ) -> None:
         if bpe_folder is None:
             bpe_folder = BPE_FOLDER
@@ -426,7 +427,7 @@ class SentencePieceTensorizer(Composition[str, torch.Tensor]):
     """
 
     def __init__(
-        self, folder: tp.Optional[tp.PathLike] = None, no_unk: bool = False
+        self, folder: tp.Optional[PathLike] = None, no_unk: bool = False
     ) -> None:
         tokenizer = SentencePieceTokenizer(
             Path(folder) / "model" if folder is not None else None
