@@ -54,14 +54,16 @@ If you want to give it a try, you will need to update `codegen_sources/external_
 
 To get the IR data to train the models:
 ```
+export BPE_PATH="data/cpp-go-java-rust/codes"            # Replace with your own if needed
+
 python -m codegen_sources.preprocessing.preprocess 
 <DATASET_PATH>                                    # folder containing raw data i.e json.gz
 --langs cpp rust java go                          # languages to prepocess
 --mode ir_functions                               # dataset mode
 --local True                                      # Run on your local machine if True. If False run on a cluster (requires submitit setup)
 --bpe_mode fast
---fastbpe_code_path <BPE_PATH>                    # This can either be the bpe codes we provide in data/bpe/cpp-java-python/codes or codes learnt from monolingual dataset mode
---train_splits NGPU                               # nb of splits for training data - corresponds to the number of GPU you have
+--fastbpe_code_path $BPE_PATH                    # This can either be the bpe codes we provide in data/bpe/cpp-java-python/codes or codes learnt from monolingual dataset mode
+--train_splits $NGPU                               # nb of splits for training data - corresponds to the number of GPU you have
 ```
 
 Note that is your data is small enough to fit on a single GPU, then NGPU=1 and loading this single split on all GPU is the normal thing to do. Note also that if you run you training on multiple machine, each with NGPU GPUS, splitting in NGPU is fine as well. You will just have to precise ``` --split_data_accross_gpu local ``` in your training parameters. In our case, we add 4 machines of 8 GPU each, we set NPU=8 and ``` --split_data_accross_gpu local ```.
