@@ -24,36 +24,15 @@ from codegen_sources.code_runners.code_runner import RUN_ROOT_DIR
 from codegen_sources.code_runners.utils import GO_IMPORTS_PATH
 from codegen_sources.model.src.utils import get_java_bin_path
 from codegen_sources.preprocessing.lang_processors import LangProcessor
-from codegen_sources.ir_paths import (
-    LLVM_5_PATH,
-    LLVM_13_PATH,
-    CARGO_PATH,
-    JLANG_PATH,
-    GOLLVM_PATH,
-)
 
 DEFAULT_IR_WORKDIR = RUN_ROOT_DIR.joinpath("ir_generation/tmp_tests_folder")
 
 ERROR_MESSAGE = "subprocess error:"
 
-CPP_TO_IR_COMMAND = (
-    LLVM_13_PATH
-    + "clang++ -c -emit-llvm -S -g1 -O0 {} -o {} -std=c++17 -Xclang -disable-O0-optnone -Wno-narrowing"
-)
-EXPORT_PATH = f"export PATH={LLVM_13_PATH}:$PATH; "
-
-RUST_TO_IR_COMMAND = (
-    EXPORT_PATH
-    + CARGO_PATH
-    + "rustc -C target-feature=-crt-static -C opt-level=z {} --crate-type={} --emit=llvm-ir -C debuginfo=1 -o {}"
-)
-
-JAVA_TO_IR_COMMAND = (
-    f'export PATH="{get_java_bin_path()}:$PATH"; {JLANG_PATH}bin/jlangc -cp {JLANG_PATH}'
-    + "jdk/out/classes {} -d {}"
-)
-
-GO_TO_IR_COMMAND = GOLLVM_PATH + "llvm-goc -g -O0 -S -emit-llvm {} -o {}"
+CPP_TO_IR_COMMAND = "clang++ -c -emit-llvm -S -g1 -O0 {} -o {} -std=c++17 -Xclang -disable-O0-optnone -Wno-narrowing"
+RUST_TO_IR_COMMAND = "rustc -C target-feature=-crt-static -C opt-level=z {} --crate-type={} --emit=llvm-ir -C debuginfo=1 -o {}"
+JAVA_TO_IR_COMMAND = 'export PATH="{}:$PATH"; {}bin/jlangc -cp {}jdk/out/classes {} -d {}'
+GO_TO_IR_COMMAND = "llvm-goc -g -O0 -S -emit-llvm {} -o {}"
 
 LANG_IMPORTS = {
     "cpp": """#include <iostream>
@@ -130,6 +109,8 @@ def get_lang_processor(lang):
 
 @timeout(120)
 def demangle_names_cpp(full_file, verbose=False, timeout=120):
+    from codegen_sources.external_paths import LLVM_13_PATH
+
     names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_file))
     demangled = [
         subprocess.check_output(
@@ -150,6 +131,8 @@ def demangle_names_cpp(full_file, verbose=False, timeout=120):
 
 @timeout(120)
 def demangle_names_rust(full_file):
+    from codegen_sources.external_paths import CARGO_PATH
+
     names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_file))
     demangled = [
         subprocess.check_output(CARGO_PATH + f"rustfilt {el}", shell=True)
@@ -299,7 +282,9 @@ def extract_lang_IR(lang_file, output_path, lang, verbose=False, timeout=120):
 
 
 def extract_cpp_IR(cpp_file, output_path, verbose=False, timeout=120):
-    cmd = CPP_TO_IR_COMMAND.format(cpp_file, output_path)
+    from codegen_sources.external_paths import LLVM_13_PATH
+
+    cmd = LLVM_13_PATH + "/" + CPP_TO_IR_COMMAND.format(cpp_file, output_path)
     subprocess.check_call(
         cmd,
         shell=True,
@@ -310,7 +295,10 @@ def extract_cpp_IR(cpp_file, output_path, verbose=False, timeout=120):
 
 
 def extract_rust_IR_base(rust_file, output_path, crate, verbose=False, timeout=120):
-    cmd = RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
+    from codegen_sources.external_paths import CARGO_PATH, LLVM_13_PATH
+    
+    EXPORT_PATH = f"export PATH={LLVM_13_PATH}:$PATH; "
+    cmd = EXPORT_PATH + CARGO_PATH + "/" + RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
     subprocess.check_call(
         cmd,
         shell=True,
@@ -338,13 +326,15 @@ def extract_rust_IR(rust_file, output_path, verbose=False, timeout=120):
 
 
 def extract_java_IR(java_file, output_path, verbose=False, timeout=120):
+    from codegen_sources.external_paths import JLANG_PATH, LLVM_5_PATH, LLVM_13_PATH
+
     # We remove the "package" lines...
     full_java_file = open(java_file).read()
     full_java_file = re.sub(r"(\n|^)package \S+;(\n|$)", "", full_java_file)
     with open(java_file, "w") as f:
         f.write(full_java_file)
 
-    cmd = JAVA_TO_IR_COMMAND.format(java_file, os.path.dirname(output_path))
+    cmd = JAVA_TO_IR_COMMAND.format(get_java_bin_path(), JLANG_PATH, JLANG_PATH, java_file, os.path.dirname(output_path))
     output_channel = None if verbose else subprocess.DEVNULL
     subprocess.check_call(
         cmd, shell=True, timeout=timeout, stderr=output_channel, stdout=output_channel
@@ -370,6 +360,8 @@ def extract_java_IR(java_file, output_path, verbose=False, timeout=120):
 
 
 def extract_go_IR(go_file, output_path, verbose=False, timeout=120):
+    from codegen_sources.external_paths import GOLLVM_PATH
+
     output = None if verbose else subprocess.DEVNULL
     _ = subprocess.check_call(
         f"{GO_IMPORTS_PATH} -w {go_file}",
@@ -379,7 +371,7 @@ def extract_go_IR(go_file, output_path, verbose=False, timeout=120):
         executable="/bin/bash",
     )
     subprocess.check_call(
-        GO_TO_IR_COMMAND.format(go_file, output_path),
+        GOLLVM_PATH + GO_TO_IR_COMMAND.format(go_file, output_path),
         shell=True,
         timeout=timeout,
         stderr=output,
@@ -397,6 +389,8 @@ def find_globals(ll_file):
 def extract_function(
     funcname, input_ll_file, output_ll_file, verbose=False, timeout=120
 ):
+    from codegen_sources.external_paths import LLVM_13_PATH
+
     # --keep-const-init would keep ALL the globals, not only the ones we need
     extract_command = (  # This says which globs we need but does not extract them
         LLVM_13_PATH + "llvm-extract --func={} {} -S -o {}"

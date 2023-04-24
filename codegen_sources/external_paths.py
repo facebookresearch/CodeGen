@@ -14,4 +14,4 @@
 # JLANG_PATH = "<...>/JLang/"
 
 # https://go.googlesource.com/gollvm/
-# GOLLVM_PATH = "<...>/bin/" 
+# GOLLVM_PATH = "<...>/bin/"
