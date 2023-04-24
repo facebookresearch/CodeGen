@@ -89,7 +89,6 @@ class IRFullFilesMode(DatasetMode):
                     content,
                     lang_processor.language,
                     func_level=False,
-                    cannonize=False,
                     clean_dir=True,
                     verbose=False,
                 )

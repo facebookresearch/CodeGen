@@ -96,7 +96,6 @@ class IRFunctionsMode(DatasetMode):
                     lang_processor.detokenize_code(x),
                     lang_processor.language,
                     func_level=True,
-                    cannonize=False,
                 )
                 for x in funcs
             ]

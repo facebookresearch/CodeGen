@@ -113,7 +113,7 @@ def run_rust_program(
     script_path: str, i: int
 ) -> tp.Tuple[tp.Tuple[str, tp.Optional[str]], int]:
     code_path = Path(script_path)
-    bin_path = str(code_path.with_suffix("")) + "_go"
+    bin_path = str(code_path.with_suffix("")) + "_rust"
     try:
         code_runners.compile_rust(
             code_path, compilation_timeout=30, output_path=Path(bin_path),

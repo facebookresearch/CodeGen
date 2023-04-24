@@ -1393,7 +1393,6 @@ class EncDecEvaluator(Evaluator):
                 get_programming_language_name(lang1),
                 True,
                 ir_verbosity,
-                self.params.cannonize_irs,
             )
             for s in input_sent_irs
         ]
