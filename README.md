@@ -1,9 +1,10 @@
 This repository is a toolkit to do machine learning for programming languages. It implements tokenization, dataset preprocessing, model training and model evaluation.
 
 We provide reference implementations of the following papers:
-- [TransCoder-ST: Leveraging Automated Unit Tests for Unsupervised Code Translation](https://arxiv.org/pdf/2110.06773.pdf) (2021)
-- [DOBF: A Deobfuscation Pre-Training Objective for Programming Languages](https://arxiv.org/pdf/2102.07492.pdf) (2021)
 - [TransCoder: Unsupervised Translation of Programming Languages](https://arxiv.org/pdf/2006.03511.pdf) (2020)
+- [DOBF: A Deobfuscation Pre-Training Objective for Programming Languages](https://arxiv.org/pdf/2102.07492.pdf) (2021)
+- [TransCoder-ST: Leveraging Automated Unit Tests for Unsupervised Code Translation](https://arxiv.org/pdf/2110.06773.pdf) (2021)
+- [TransCoder-IR: Code Translation with Compiler Representations](https://arxiv.org/pdf/2207.03578.pdf) (2022)
 
 We also provide pre-trained models for language modeling, translation and deobfuscation.
 
@@ -144,12 +145,22 @@ To have details on how to retrain specific models, please refer to the README sp
 @article{roziere2021leveraging,
   title={Leveraging Automated Unit Tests for Unsupervised Code Translation},
   author={Roziere, Baptiste and Zhang, Jie M and Charton, Francois and Harman, Mark and Synnaeve, Gabriel and Lample, Guillaume},
-  journal={arXiv preprint arXiv:2110.06773},
-  year={2021}
+  journal={ICLR},
+  year={2022}
 }
 ```
 
-*Equal Contribution
+### TransCoder-IR
+```
+@article{szafraniec2022code,
+  title={Code translation with Compiler Representations},
+  author={Szafraniec, Marc and Roziere, Baptiste and Charton, Hugh Leather Francois and Labatut, Patrick and Synnaeve, Gabriel},
+  journal={ICLR},
+  year={2023}
+}
+```
+
+\* Equal Contribution
 
 ## License
 The validation and test parallel datasets from GeeksForGeeks, and the evaluation scripts under [data/transcoder_evaluation_gfg](data/transcoder_evaluation_gfg) are released under the Creative Commons Attribution-ShareAlike 2.0 license. See https://creativecommons.org/licenses/by-sa/2.0/ for more information.
