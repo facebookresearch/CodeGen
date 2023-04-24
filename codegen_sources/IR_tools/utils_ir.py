@@ -31,7 +31,9 @@ ERROR_MESSAGE = "subprocess error:"
 
 CPP_TO_IR_COMMAND = "clang++ -c -emit-llvm -S -g1 -O0 {} -o {} -std=c++17 -Xclang -disable-O0-optnone -Wno-narrowing"
 RUST_TO_IR_COMMAND = "rustc -C target-feature=-crt-static -C opt-level=z {} --crate-type={} --emit=llvm-ir -C debuginfo=1 -o {}"
-JAVA_TO_IR_COMMAND = 'export PATH="{}:$PATH"; {}bin/jlangc -cp {}jdk/out/classes {} -d {}'
+JAVA_TO_IR_COMMAND = (
+    'export PATH="{}:$PATH"; {}bin/jlangc -cp {}jdk/out/classes {} -d {}'
+)
 GO_TO_IR_COMMAND = "llvm-goc -g -O0 -S -emit-llvm {} -o {}"
 
 LANG_IMPORTS = {
@@ -296,9 +298,14 @@ def extract_cpp_IR(cpp_file, output_path, verbose=False, timeout=120):
 
 def extract_rust_IR_base(rust_file, output_path, crate, verbose=False, timeout=120):
     from codegen_sources.external_paths import CARGO_PATH, LLVM_13_PATH
-    
+
     EXPORT_PATH = f"export PATH={LLVM_13_PATH}:$PATH; "
-    cmd = EXPORT_PATH + CARGO_PATH + "/" + RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
+    cmd = (
+        EXPORT_PATH
+        + CARGO_PATH
+        + "/"
+        + RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
+    )
     subprocess.check_call(
         cmd,
         shell=True,
@@ -334,7 +341,13 @@ def extract_java_IR(java_file, output_path, verbose=False, timeout=120):
     with open(java_file, "w") as f:
         f.write(full_java_file)
 
-    cmd = JAVA_TO_IR_COMMAND.format(get_java_bin_path(), JLANG_PATH, JLANG_PATH, java_file, os.path.dirname(output_path))
+    cmd = JAVA_TO_IR_COMMAND.format(
+        get_java_bin_path(),
+        JLANG_PATH,
+        JLANG_PATH,
+        java_file,
+        os.path.dirname(output_path),
+    )
     output_channel = None if verbose else subprocess.DEVNULL
     subprocess.check_call(
         cmd, shell=True, timeout=timeout, stderr=output_channel, stdout=output_channel

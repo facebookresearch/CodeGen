@@ -1388,11 +1388,7 @@ class EncDecEvaluator(Evaluator):
         ir_verbosity = False
         jobs = [
             executor.submit(
-                code_to_ir,
-                s,
-                get_programming_language_name(lang1),
-                True,
-                ir_verbosity,
+                code_to_ir, s, get_programming_language_name(lang1), True, ir_verbosity,
             )
             for s in input_sent_irs
         ]

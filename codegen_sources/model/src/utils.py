@@ -871,6 +871,7 @@ def get_programming_language_name(lang):
 def get_java_bin_path():
     try:
         from codegen_sources.external_paths import JAVA_HOME
+
         return JAVA_HOME
     except ImportError:
         return ""

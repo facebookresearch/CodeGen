@@ -79,4 +79,3 @@ def test_submit_correct_function_bug():
 
     assert results_list == [("success", None)], results_list
     assert i == id, f"{i} != {id}"
-    
