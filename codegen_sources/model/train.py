@@ -752,12 +752,6 @@ def get_parser():
         help="Check if the generated function is compilable, and if it returns the same output as ground truth.",
     )
     parser.add_argument(
-        "--cannonize_irs",
-        type=bool_flag,
-        default=False,
-        help="Whether to cannonize IRs for pivot at evaluation time",
-    )
-    parser.add_argument(
         "--eval_st",
         type=bool_flag,
         default=False,

@@ -41,7 +41,6 @@ REPO_ROOT = Path(__file__).parents[3].absolute()
 TREE_SITTER_ROOT = REPO_ROOT.joinpath("tree-sitter")
 sys.path.append(str(REPO_ROOT))
 print("adding to path", str(REPO_ROOT))
-# from codegen_sources.preprocessing.lang_processors import LangProcessor, IRProcessor
 
 from .logger import create_logger
 
@@ -870,8 +869,9 @@ def get_programming_language_name(lang):
 
 
 def get_java_bin_path():
-    JAVA_HOME = "/public/apps/java/jdk/1.8.0_131/bin/"
-    if Path(JAVA_HOME).is_dir():
+    try:
+        from codegen_sources.external_paths import JAVA_HOME
+
         return JAVA_HOME
-    else:
+    except ImportError:
         return ""

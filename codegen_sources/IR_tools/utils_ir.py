@@ -11,7 +11,6 @@ import re
 import signal
 import subprocess
 import time
-import unittest
 from functools import partial, wraps
 from logging import getLogger
 from pathlib import Path
@@ -30,37 +29,12 @@ DEFAULT_IR_WORKDIR = RUN_ROOT_DIR.joinpath("ir_generation/tmp_tests_folder")
 
 ERROR_MESSAGE = "subprocess error:"
 
-LLVM_5_PATH = "/public/apps/llvm/5.0.1/gcc.5.4.0/bin/"  # Useful for Java as JLang output is LLVM v5
-LLVM_13_PATH = "/private/home/mszafraniec/packages/clang+llvm-13.0.0-x86_64-linux-gnu-ubuntu-16.04/bin/"  # Much faster than the Debug/cannonize version
-LLVM_14_PATH_CANNONIZE = "/private/home/mszafraniec/llvm-project/build/bin/"  # TODO: Rebuild the release version with cannonize patch
-CANNONIZE_IR_COMMAND = (
-    LLVM_14_PATH_CANNONIZE + "opt -Oz -S {} --strip-debug -reorder-operands {} -o {}"
-)
-CANNONIZATION_OPTIONS = "--ir-canonicalizer -enable-new-pm=0"
-CPP_TO_IR_COMMAND = (
-    LLVM_13_PATH
-    + "clang++ -c -emit-llvm -S -g1 -O0 {} -o {} -std=c++17 -Xclang -disable-O0-optnone -Wno-narrowing"
-)
-EXPORT_PATH = "export PATH=/private/home/broz/clang+llvm-12.0.0-x86_64-linux-gnu-ubuntu-20.04/bin/:$PATH; "
-
-
-CARGO_PATH = "/private/home/mszafraniec/.cargo/bin/"
-RUST_TO_IR_COMMAND = (
-    EXPORT_PATH
-    + CARGO_PATH
-    + "rustc -C target-feature=-crt-static -C opt-level=z {} --crate-type={} --emit=llvm-ir -C debuginfo=1 -o {}"
-)
-
-
-JLANG_PATH = "/private/home/mszafraniec/packages/JLang/"
+CPP_TO_IR_COMMAND = "clang++ -c -emit-llvm -S -g1 -O0 {} -o {} -std=c++17 -Xclang -disable-O0-optnone -Wno-narrowing"
+RUST_TO_IR_COMMAND = "rustc -C target-feature=-crt-static -C opt-level=z {} --crate-type={} --emit=llvm-ir -C debuginfo=1 -o {}"
 JAVA_TO_IR_COMMAND = (
-    f'export PATH="{get_java_bin_path()}:$PATH"; {JLANG_PATH}bin/jlangc -cp {JLANG_PATH}'
-    + "jdk/out/classes {} -d {}"
+    'export PATH="{}:$PATH"; {}bin/jlangc -cp {}jdk/out/classes {} -d {}'
 )
-
-
-GOLLVM_PATH = "/private/home/mszafraniec/packages/gollvm_install/bin/"
-GO_TO_IR_COMMAND = GOLLVM_PATH + "llvm-goc -g -O0 -S -emit-llvm {} -o {}"
+GO_TO_IR_COMMAND = "llvm-goc -g -O0 -S -emit-llvm {} -o {}"
 
 LANG_IMPORTS = {
     "cpp": """#include <iostream>
@@ -100,22 +74,6 @@ class TimeoutError(BaseException):
     pass
 
 
-class MissingCommandError(RuntimeError, unittest.SkipTest):
-    """Raised when a command is missing when not on the FAIR cluster"""
-
-
-def _check_command(command: str) -> None:
-    """Checks that the command does not refer a local path when not on the cluster
-    If it does, a MissingCommandError is raised, which will skip the corresponding tests
-    """
-    # hacky way to figure we are on the cluster
-    if not Path("/checkpoint/broz/").is_dir():
-        if any(x in command for x in ("broz", "mszafraniec")):
-            raise MissingCommandError(
-                f"The specified command {command} is not available on your system"
-            )
-
-
 # From https://github.com/glample/ASMR/blob/master/src/utils.py
 def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
     def decorator(func):
@@ -152,28 +110,10 @@ def get_lang_processor(lang):
 
 
 @timeout(120)
-def cannonize_IR(
-    original_ir_file, cannonized_path, cannonize, verbose=False, timeout=120
-):
-    subprocess.check_call(
-        CANNONIZE_IR_COMMAND.format(
-            CANNONIZATION_OPTIONS if cannonize else "",
-            original_ir_file,
-            str(cannonized_path) + "_tmp",
-        ),
-        shell=True,
-        stdout=None if verbose else subprocess.DEVNULL,
-        stderr=None if verbose else subprocess.DEVNULL,
-        timeout=timeout,
-    )
-    # If the above command fails it could still create a file, and we don't want that
-    # the file at cannonized_path exist in that case.
-    os.rename(cannonized_path + "_tmp", cannonized_path)
+def demangle_names_cpp(full_file, verbose=False, timeout=120):
+    from codegen_sources.external_paths import LLVM_13_PATH
 
-
-@timeout(120)
-def demangle_names_cpp(full_cannonized_file, verbose=False, timeout=120):
-    names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_cannonized_file))
+    names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_file))
     demangled = [
         subprocess.check_output(
             LLVM_13_PATH + f"llvm-cxxfilt {el}", shell=True, stderr=subprocess.DEVNULL
@@ -186,16 +126,16 @@ def demangle_names_cpp(full_cannonized_file, verbose=False, timeout=120):
 
     pairs = list(zip(names_to_demangle, demangled))
     for old, new in pairs:
-        full_cannonized_file = re.sub(
-            rf"(?<=@){old}(?=\W)", f'"{new}"', full_cannonized_file
-        )
+        full_file = re.sub(rf"(?<=@){old}(?=\W)", f'"{new}"', full_file)
 
-    return full_cannonized_file
+    return full_file
 
 
 @timeout(120)
-def demangle_names_rust(full_cannonized_file):
-    names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_cannonized_file))
+def demangle_names_rust(full_file):
+    from codegen_sources.external_paths import CARGO_PATH
+
+    names_to_demangle = np.unique(re.findall(r"(?<=@)_\w+", full_file))
     demangled = [
         subprocess.check_output(CARGO_PATH + f"rustfilt {el}", shell=True)
         .decode()
@@ -206,11 +146,9 @@ def demangle_names_rust(full_cannonized_file):
     pairs = list(zip(names_to_demangle, demangled))
     for old, new in pairs:
         new = new.split("::", 1)[-1]
-        full_cannonized_file = re.sub(
-            rf"(?<=@){old}(?=\W)", f'"{new}"', full_cannonized_file
-        )
+        full_file = re.sub(rf"(?<=@){old}(?=\W)", f'"{new}"', full_file)
 
-    return full_cannonized_file
+    return full_file
 
 
 def demangle_names_jlang_name_only(mangled_name):
@@ -233,13 +171,13 @@ def demangle_names_jlang_name_only(mangled_name):
 
 
 @timeout(120)
-def demangle_names_java(full_cannonized_file):
+def demangle_names_java(full_file):
     POLYGLOT_PREFIX = "Polyglot_"
     names_to_demangle = np.unique(
         [
             el.rsplit(" ", 1)[1][1:]
             for el in re.findall(
-                rf"(?<=\n)define .*? @{POLYGLOT_PREFIX}\w+", "\n" + full_cannonized_file
+                rf"(?<=\n)define .*? @{POLYGLOT_PREFIX}\w+", "\n" + full_file
             )
         ]
     )
@@ -247,22 +185,20 @@ def demangle_names_java(full_cannonized_file):
 
     pairs = list(zip(names_to_demangle, demangled))
     for old, new in pairs:
-        full_cannonized_file = re.sub(
-            rf"(?<=@){old}(?=\W)", f'"{new}"', full_cannonized_file
-        )
+        full_file = re.sub(rf"(?<=@){old}(?=\W)", f'"{new}"', full_file)
 
-    #     return full_cannonized_file
-    return trim_java_file(full_cannonized_file)
+    #     return full_file
+    return trim_java_file(full_file)
 
 
 @timeout(120)
-def demangle_names_go(full_cannonized_file):
+def demangle_names_go(full_file):
     GO_PREFIX = "go_0"
     names_to_demangle = set(
         [
             el.rsplit(" ", 1)[1][1:]
             for el in re.findall(
-                rf"(?<=\n)define .*? @{GO_PREFIX}[\w.]+", "\n" + full_cannonized_file
+                rf"(?<=\n)define .*? @{GO_PREFIX}[\w.]+", "\n" + full_file
             )
         ]
     )
@@ -275,11 +211,9 @@ def demangle_names_go(full_cannonized_file):
 
     pairs = list(zip(names_to_demangle, demangled))
     for old, new in pairs:
-        full_cannonized_file = re.sub(
-            rf"(?<=@){old}(?=\W)", f'"{new}"', full_cannonized_file
-        )
+        full_file = re.sub(rf"(?<=@){old}(?=\W)", f'"{new}"', full_file)
 
-    return full_cannonized_file
+    return full_file
 
 
 def get_demangle_func(lang):
@@ -306,39 +240,37 @@ def multiple_replace(substitutions, string):
     return re.sub("|".join(substitutions.keys()), rep, string)
 
 
-def remove_semicolumn_lines(full_cannonized_file):
-    return re.sub("\n;.*(?=\n)", "", "\n" + full_cannonized_file).strip()
+def remove_semicolumn_lines(full_file):
+    return re.sub("\n;.*(?=\n)", "", "\n" + full_file).strip()
 
 
 @timeout(120)
-def clean_file(full_cannonized_file):
+def clean_file(full_file):
     # Remove !tbaa ...
-    full_cannonized_file = re.sub(", !tbaa ![0-9]+", "", full_cannonized_file)
+    full_file = re.sub(", !tbaa ![0-9]+", "", full_file)
     # Remove beginning of file
-    full_cannonized_file = full_cannonized_file.split("\n\n", 1)[1]
+    full_file = full_file.split("\n\n", 1)[1]
     # Remove end of file (attributes etc)
-    full_cannonized_file = full_cannonized_file.rsplit("\n\n", 3)[0]
+    full_file = full_file.rsplit("\n\n", 3)[0]
     # Rename blocks
-    full_cannonized_file = rename_blocks(full_cannonized_file)
+    full_file = rename_blocks(full_file)
     # Remove semicolumn lines
-    full_cannonized_file = remove_semicolumn_lines(full_cannonized_file)
+    full_file = remove_semicolumn_lines(full_file)
 
-    return full_cannonized_file
+    return full_file
 
 
-def rename_blocks(full_cannonized_file):
+def rename_blocks(full_file):
     # Rename all blocks (entry, start, if.then... in bb1, bb2, ...)
     all_blocks = [
-        el[:-1]
-        for el in re.findall(r"(?<=\n)\w\S+", full_cannonized_file)
-        if el.endswith(":")
+        el[:-1] for el in re.findall(r"(?<=\n)\w\S+", full_file) if el.endswith(":")
     ]
     replace_dict = {
         **{rf"(?<=\n){el}(?=\W)": f"bb{i + 1}" for i, el in enumerate(all_blocks)},
         **{rf"%{el}(?=\W)": f"%bb{i + 1}" for i, el in enumerate(all_blocks)},
     }
-    full_cannonized_file = multiple_replace(replace_dict, full_cannonized_file)
-    return full_cannonized_file
+    full_file = multiple_replace(replace_dict, full_file)
+    return full_file
 
 
 def extract_lang_IR(lang_file, output_path, lang, verbose=False, timeout=120):
@@ -352,8 +284,9 @@ def extract_lang_IR(lang_file, output_path, lang, verbose=False, timeout=120):
 
 
 def extract_cpp_IR(cpp_file, output_path, verbose=False, timeout=120):
-    cmd = CPP_TO_IR_COMMAND.format(cpp_file, output_path)
-    _check_command(cmd)
+    from codegen_sources.external_paths import LLVM_13_PATH
+
+    cmd = LLVM_13_PATH + "/" + CPP_TO_IR_COMMAND.format(cpp_file, output_path)
     subprocess.check_call(
         cmd,
         shell=True,
@@ -364,8 +297,15 @@ def extract_cpp_IR(cpp_file, output_path, verbose=False, timeout=120):
 
 
 def extract_rust_IR_base(rust_file, output_path, crate, verbose=False, timeout=120):
-    cmd = RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
-    _check_command(cmd)
+    from codegen_sources.external_paths import CARGO_PATH, LLVM_13_PATH
+
+    EXPORT_PATH = f"export PATH={LLVM_13_PATH}:$PATH; "
+    cmd = (
+        EXPORT_PATH
+        + CARGO_PATH
+        + "/"
+        + RUST_TO_IR_COMMAND.format(rust_file, crate, output_path)
+    )
     subprocess.check_call(
         cmd,
         shell=True,
@@ -383,7 +323,7 @@ def extract_rust_IR(rust_file, output_path, verbose=False, timeout=120):
         )
         if verbose:
             print(f"{rust_file} extracted with bin", flush=True)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         # Timeout in seconds
         extract_rust_IR_base(
             rust_file, output_path, crate="dylib", verbose=verbose, timeout=timeout
@@ -393,14 +333,21 @@ def extract_rust_IR(rust_file, output_path, verbose=False, timeout=120):
 
 
 def extract_java_IR(java_file, output_path, verbose=False, timeout=120):
+    from codegen_sources.external_paths import JLANG_PATH, LLVM_5_PATH, LLVM_13_PATH
+
     # We remove the "package" lines...
     full_java_file = open(java_file).read()
     full_java_file = re.sub(r"(\n|^)package \S+;(\n|$)", "", full_java_file)
     with open(java_file, "w") as f:
         f.write(full_java_file)
 
-    cmd = JAVA_TO_IR_COMMAND.format(java_file, os.path.dirname(output_path))
-    _check_command(cmd)
+    cmd = JAVA_TO_IR_COMMAND.format(
+        get_java_bin_path(),
+        JLANG_PATH,
+        JLANG_PATH,
+        java_file,
+        os.path.dirname(output_path),
+    )
     output_channel = None if verbose else subprocess.DEVNULL
     subprocess.check_call(
         cmd, shell=True, timeout=timeout, stderr=output_channel, stdout=output_channel
@@ -426,7 +373,8 @@ def extract_java_IR(java_file, output_path, verbose=False, timeout=120):
 
 
 def extract_go_IR(go_file, output_path, verbose=False, timeout=120):
-    _check_command(GO_TO_IR_COMMAND)
+    from codegen_sources.external_paths import GOLLVM_PATH
+
     output = None if verbose else subprocess.DEVNULL
     _ = subprocess.check_call(
         f"{GO_IMPORTS_PATH} -w {go_file}",
@@ -436,7 +384,7 @@ def extract_go_IR(go_file, output_path, verbose=False, timeout=120):
         executable="/bin/bash",
     )
     subprocess.check_call(
-        GO_TO_IR_COMMAND.format(go_file, output_path),
+        GOLLVM_PATH + GO_TO_IR_COMMAND.format(go_file, output_path),
         shell=True,
         timeout=timeout,
         stderr=output,
@@ -454,11 +402,12 @@ def find_globals(ll_file):
 def extract_function(
     funcname, input_ll_file, output_ll_file, verbose=False, timeout=120
 ):
+    from codegen_sources.external_paths import LLVM_13_PATH
+
     # --keep-const-init would keep ALL the globals, not only the ones we need
     extract_command = (  # This says which globs we need but does not extract them
         LLVM_13_PATH + "llvm-extract --func={} {} -S -o {}"
     )
-    _check_command(extract_command)
     subprocess.check_call(
         extract_command.format(funcname, input_ll_file, output_ll_file),
         shell=True,
@@ -596,7 +545,6 @@ def extract_all_ll_funcnames(full_file):
 def source_file_to_cleaned_IR(
     source_path,
     lang,
-    cannonize,
     work_dir=DEFAULT_IR_WORKDIR,
     verbose=False,
     timeout=120,
@@ -625,10 +573,6 @@ def source_file_to_cleaned_IR(
 
     original_file_funcs_dir = os.path.join(work_dir_full, "ll_functions")
     os.makedirs(original_file_funcs_dir, exist_ok=True)
-    cannonized_dir = os.path.join(work_dir_full, "cannonized")
-    os.makedirs(cannonized_dir, exist_ok=True)
-    # cleaned_dir = output_cleaned_dir
-    # os.makedirs(cleaned_dir, exist_ok=True)
 
     all_output_funcs = []
     for n_func, func in enumerate(mangled_funcs):
@@ -638,19 +582,10 @@ def source_file_to_cleaned_IR(
         func_names = extract_all_ll_funcnames(open(output_ll_file, "r").read())
         assert len(func_names) == 1  # Should be only one
 
-        cannonized_path = os.path.join(cannonized_dir, f"{n_func}.ll")
-        cannonize_IR(
-            output_ll_file, cannonized_path, cannonize, verbose=verbose, timeout=timeout
-        )
-
-        # cleaned_path = os.path.join(cleaned_dir, f"{n_func}.ll")
-        full_cannonized_file = open(cannonized_path, "r").read()
+        full_file = open(output_ll_file, "r").read()
         demangle_fn = get_demangle_func(lang)
-        all_output_funcs.append(demangle_fn(clean_file(full_cannonized_file)))
-        # with open(cleaned_path, "w") as f:
-        #     f.write(demangle_fn(clean_file(full_cannonized_file)))
+        all_output_funcs.append(demangle_fn(clean_file(full_file)))
 
-        # all_output_funcs.append(cleaned_path)
     if clean_dir and work_dir_full.is_dir():
         shutil.rmtree(work_dir_full)
     return all_output_funcs
@@ -676,7 +611,6 @@ def code_to_ir(
     lang,
     func_level=False,
     verbose=False,
-    cannonize=False,
     timeout=120,
     work_dir=DEFAULT_IR_WORKDIR,
     clean_dir=True,
@@ -693,12 +627,7 @@ def code_to_ir(
         f.write(input_code)
     try:
         out = source_file_to_cleaned_IR(
-            output_file,
-            lang,
-            cannonize=cannonize,
-            verbose=verbose,
-            timeout=timeout,
-            clean_dir=clean_dir,
+            output_file, lang, verbose=verbose, timeout=timeout, clean_dir=clean_dir,
         )
         if clean_dir:
             shutil.rmtree(tmp_work_dir)

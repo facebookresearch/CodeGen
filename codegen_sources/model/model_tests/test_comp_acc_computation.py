@@ -79,26 +79,3 @@ def test_submit_correct_function_bug():
 
     assert results_list == [("success", None)], results_list
     assert i == id, f"{i} != {id}"
-
-
-# def test_eval_function():
-#     path = Path("/checkpoint/broz/dumped/test_run/l188coaqvj/hypotheses/")
-#     lang1 = "cpp_sa"
-#     lang2 = "cpp_sa"
-#     split = "valid"
-#     ref_path = path.joinpath(f"ref.{lang1}-{lang2}.{split}.txt")
-#     id_path = path.joinpath(f"ids.{lang1}-{lang2}.{split}.txt")
-#     hyp_paths = [path.joinpath(f"hyp0.{lang1}-{lang2}.{split}_beam0.txt")]
-#
-#     eval_function_output(
-#         ref_path,
-#         hyp_paths,
-#         id_path,
-#         lang1,
-#         lang2,
-#         EVAL_SCRIPTS_,
-#         EVAL_SCRIPT_FOLDER[split],
-#         False,
-#         False,
-#         tests_type=GFG,
-#     )
