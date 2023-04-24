@@ -69,7 +69,7 @@ python -m codegen_sources.preprocessing.preprocess \
 <DATA_PATH> \                            # folder containing json.gz
 --langs java cpp python  \               # languages to process
 --mode monolingual_functions \           # dataset mode
---bpe_mode=fast_bpe \                    # BPE mode. by default it is fast_BPE. can be roberta_bpe
+--bpe_mode=fast \                    # BPE mode. by default it is fast. can be roberta
 --local=True \                           # Run on your local machine if True. If False run on a cluster (requires submitit setup)
 --train_splits=1                         # Number of trainings splits
 ```
