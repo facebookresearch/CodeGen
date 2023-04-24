@@ -16,7 +16,7 @@ python -m codegen_sources.preprocessing.preprocess
 --langs java                                        # languages to prepocess
 --mode=monolingual_functions                        # dataset mode
 --local=False                                       # Run on your local machine if True. If False run on a cluster (requires submitit setup)
---bpe_mode=fast_bpe 
+--bpe_mode=fast
 --train_splits=NGPU                                 # nb of splits for training data - corresponds to the number of GPU you have
 ```
 
