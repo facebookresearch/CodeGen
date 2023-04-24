@@ -12,6 +12,7 @@ You can find some documentation for each projects in the docs folder:
 - [TransCoder](docs/transcoder.md).
 - [DOBF](docs/dobf.md)
 - [TransCoder-ST](docs/TransCoder-ST.md)
+- [TransCoder-IR](docs/TransCoder-IR.md)
 
 
 ## Dependencies
