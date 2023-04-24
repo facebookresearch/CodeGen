@@ -68,7 +68,7 @@ python -m codegen_sources.preprocessing.preprocess
 --langs cpp java python                            # languages to prepocess
 --mode=monolingual                                 # dataset mode
 --local=True                                       # Run on your local machine if True. If False run on a cluster (requires submitit setup)
---bpe_mode=fast_bpe 
+--bpe_mode=fast 
 --train_splits=NGPU                                # nb of splits for training data - corresponds to the number of GPU you have
 ```
 To get the monolingual functions data for DAE et BT change:
