@@ -206,7 +206,7 @@ python codegen_sources/model/train.py \
 --lgs 'cpp_sa-java_sa-python_sa'  \
 --max_vocab 64000 \
 --gelu_activation false \
-roberta_mode
+--tokenization_mode fastbpe \
 --amp 2  \
 --fp16 true  \
 --tokens_per_batch 3000  \
