@@ -15,15 +15,8 @@ The dataset we use comes from [CodeSearchNet](https://arxiv.org/pdf/1909.09436.p
 
 ### Download data and preprocess
 
+Download data following [these instructions](https://github.com/github/CodeSearchNet#downloading-data-from-s3)
 ```shell
-unzip dataset.zip
-cd dataset
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/python.zip
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/java.zip
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/ruby.zip
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/javascript.zip
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/go.zip
-wget https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/php.zip
 
 unzip python.zip
 unzip java.zip
