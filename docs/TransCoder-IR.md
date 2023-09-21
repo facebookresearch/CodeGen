@@ -24,7 +24,6 @@ You can use this script to translate a function between any pair of languages in
 ```
 python -m codegen_sources.model.translate --src_lang rust --tgt_lang cpp --model_path <model_path> --beam_size 1 < my_rust_func_to_translate.rs
 ```
-
 ## Training
 
 ### Dataset
@@ -68,6 +67,9 @@ python -m codegen_sources.preprocessing.preprocess
 
 Note that is your data is small enough to fit on a single GPU, then NGPU=1 and loading this single split on all GPU is the normal thing to do. Note also that if you run you training on multiple machine, each with NGPU GPUS, splitting in NGPU is fine as well. You will just have to precise ``` --split_data_accross_gpu local ``` in your training parameters. In our case, we add 4 machines of 8 GPU each, we set NPU=8 and ``` --split_data_accross_gpu local ```.
 Note that you cannot learn bpe codes on obfuscated data, so you can either use the bpe codes we provide, or learn BPE codes running the monolingual pipeline.
+
+#### Get Parallel Test and Validation Data
+Download the data: [transcoder_test_set.zip](https://dl.fbaipublicfiles.com/transcoder/test_set/TransCoder-IR_eval_data.zip) and add the .pth files to your training data folder. 
 
 ### Train
 #### MLM, TLM
