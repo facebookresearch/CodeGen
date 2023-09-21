@@ -31,7 +31,7 @@ python -m codegen_sources.model.translate --src_lang rust --tgt_lang cpp --model
 The data you need:
 - Monolingual dataset for MLM ([see](transcoder.md#overview))
 - Obfuscation dataset for DOBF
-- Monolingual functions and parallel validation and test sets for TransCoder ([see](transcoder.md#overview))
+- [Parallel evaluation functions](https://dl.fbaipublicfiles.com/transcoder/test_set/TransCoder-IR_eval_data.zip)
 
 #### Compile Code to IR
 
