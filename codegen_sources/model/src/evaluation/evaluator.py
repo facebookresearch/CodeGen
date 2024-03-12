@@ -1620,7 +1620,7 @@ class EncDecEvaluator(Evaluator):
         )
         for beam_number, success_for_beam in enumerate(success_for_beam_number):
             scores[
-                "%s_%s-%smt_comp_acc_contrib_beam_%i"
+                "%s_%s-%s_mt_comp_acc_contrib_beam_%i"
                 % (data_set + prefix, lang1, lang2, beam_number)
             ] = (
                 100.0

@@ -89,7 +89,7 @@ python train.py
 --lgs 'java-python' \
 --max_vocab 64000 \
 --gelu_activation true\
---roberta_mode true
+--tokenization_mode fastbpe \
 --max_len 512 \ 
 
 #optimization
@@ -136,7 +136,7 @@ python train.py
 --lgs 'python_dictionary-python_obfuscated-java_dictionary-java_obfuscated' \
 --max_vocab 64000 \
 --gelu_activation true \
---roberta_mode true \ 
+--tokenization_mode fastbpe \
  
 ## model reloading
 --reload_model '<PATH_TO_MLM_MODEL>,' \
@@ -200,7 +200,7 @@ python train.py
 --lgs 'java_sa-python_sa'  \
 --max_vocab 64000 \
 --gelu_activation true \
---roberta_mode true   \ 
+--tokenization_mode fastbpe \
 --max_len 512 \ 
 
 ## model reloading
