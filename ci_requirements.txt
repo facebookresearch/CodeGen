@@ -16,7 +16,7 @@ pytest
 pytest-cov
 tree_sitter
 cython
-black==19.10b0
+black==26.3.1
 click==8.0.3  # to avoid black error
 hiplot
 mypy
